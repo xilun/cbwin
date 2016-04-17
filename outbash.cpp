@@ -245,9 +245,9 @@ public:
             return;
         }
 
+        ::CloseHandle(pi.hThread);
         ::WaitForSingleObject(pi.hProcess, INFINITE);
         ::CloseHandle(pi.hProcess);
-        ::CloseHandle(pi.hThread);
 
         m_usock.graceful_close();
     }
@@ -315,6 +315,7 @@ int main()
 
     PROCESS_INFORMATION pi;
     if (start_command(("bash --rcfile " + wsl_tmp_filename).c_str(), pi) != 0) { std::remove(tmp_filename.c_str()); std::exit(EXIT_FAILURE); }
+    ::CloseHandle(pi.hThread);
 
     struct ThreadConnection {
         std::unique_ptr<CConnection>    m_pConn;
@@ -365,17 +366,20 @@ int main()
                     if (::ioctlsocket(usock.get(), FIONBIO, &nonblocking) != 0) {
                         Win32_perror("set socket to non-blocking");
                     } else {
-                        ThreadConnection tc{ std::make_unique<CConnection>(std::move(usock)), std::thread() };
-                        CConnection *pConnection = tc.m_pConn.get();
-                        tc.m_thread = std::thread([=] { pConnection->run(); });
-                        vTConn.push_back(std::move(tc));
+                        try {
+                            ThreadConnection tc{ std::make_unique<CConnection>(std::move(usock)), std::thread() };
+                            CConnection *pConnection = tc.m_pConn.get();
+                            tc.m_thread = std::thread([=] { pConnection->run(); });
+                            vTConn.push_back(std::move(tc));
+                        } catch (const std::system_error& e) {
+                            std::fprintf(stderr, "exception system_error when trying to launch new connection thread: %s\n", e.what());
+                        }
                     }
                 }
                 break;
             }
         case WAIT_OBJECT_0:
             ::CloseHandle(pi.hProcess);
-            ::CloseHandle(pi.hThread);
             std::remove(tmp_filename.c_str());
             std::quick_exit(EXIT_SUCCESS);
             break;
