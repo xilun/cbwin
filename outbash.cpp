@@ -38,7 +38,45 @@
 
 #pragma comment(lib, "Ws2_32.lib")
 
-int start_command(const char* command, PROCESS_INFORMATION& pi)
+static bool is_ascii_letter(char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
+static char to_ascii_lower(char c)
+{
+    return (c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c;
+}
+
+static std::string ltrim(const std::string& s)
+{
+    std::size_t first = s.find_first_not_of(" \t\n\v\f\r");
+    return (first == std::string::npos) ? "" : s.substr(first);
+}
+
+static std::string str_to_ascii_lower(const std::string& s)
+{
+    std::string result(s);
+    std::transform(result.begin(), result.end(), result.begin(), to_ascii_lower);
+    return result;
+}
+
+static std::string get_comspec()
+{
+    char buf[MAX_PATH+1];
+    UINT res = GetEnvironmentVariableA("ComSpec", buf, MAX_PATH+1);
+    if (res == 0 && GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
+        res = GetSystemDirectoryA(buf, MAX_PATH+1);
+        if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "GetSystemDirectory error\n"); std::abort(); }
+        return buf + std::string("\\cmd.exe");
+    } else {
+        if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "GetEnvironmentVariable ComSpec error\n"); std::abort(); }
+        return buf;
+    }
+}
+static std::string comspec = get_comspec();
+
+static int start_command(const char* command, PROCESS_INFORMATION& pi)
 {
     STARTUPINFO si;
 
@@ -46,8 +84,13 @@ int start_command(const char* command, PROCESS_INFORMATION& pi)
     si.cb = sizeof(si);
     ZeroMemory(&pi, sizeof(pi));
 
-    std::string cmd(command);
-    if (!::CreateProcessA(NULL, &cmd[0], NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, NULL, NULL, &si, &pi)) {
+    std::string cmdline = ltrim(command);
+
+    const char *module = NULL;
+    if (str_to_ascii_lower(cmdline.substr(0, 4)) == "cmd ")
+        module = comspec.c_str();
+
+    if (!::CreateProcessA(module, &cmdline[0], NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, NULL, NULL, &si, &pi)) {
         std::fprintf(stderr, "CreateProcess failed (%d) for command: %s\n", GetLastError(), command);
         return 1;
     }
@@ -55,7 +98,7 @@ int start_command(const char* command, PROCESS_INFORMATION& pi)
     return 0;
 }
 
-void Win32_perror(const char* what)
+static void Win32_perror(const char* what)
 {
     const int errnum = GetLastError();
     const bool what_present = (what && *what);
@@ -101,7 +144,7 @@ void Win32_perror(const char* what)
     SetLastError(errnum);
 }
 
-int init_winsock()
+static int init_winsock()
 {
     WSADATA wsaData;
     int iResult;
@@ -212,9 +255,9 @@ private:
     CUniqueSocket   m_usock;
 };
 
-std::string get_temp_filename(DWORD unique)
+static std::string get_temp_filename(DWORD unique)
 {
-    #define TMP_BUFLEN (280)    // > Win32 MAX_PATH
+    #define TMP_BUFLEN (MAX_PATH+2)
     char buffer_path_name[TMP_BUFLEN];
     DWORD res = GetTempPathA(TMP_BUFLEN, buffer_path_name);
     if (res == 0) { Win32_perror("GetTempPath"); std::exit(EXIT_FAILURE); }
@@ -222,17 +265,7 @@ std::string get_temp_filename(DWORD unique)
     return buffer_path_name;
 }
 
-bool is_ascii_letter(char c)
-{
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-}
-
-char to_ascii_lower(char c)
-{
-    return (c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c;
-}
-
-std::string convert_to_wsl_filename(const std::string& win32_filename)
+static std::string convert_to_wsl_filename(const std::string& win32_filename)
 {
     if (win32_filename.length() <= 3
         || !is_ascii_letter(win32_filename[0])
