@@ -116,49 +116,78 @@ int init_winsock()
     return 0;
 }
 
+class CUniqueSocket {
+public:
+    CUniqueSocket(SOCKET conn_sock) : m_socket(conn_sock) {}
+    CUniqueSocket(const CUniqueSocket&) = delete;
+    CUniqueSocket& operator =(const CUniqueSocket&) = delete;
+    CUniqueSocket(CUniqueSocket&& other) : m_socket(other.m_socket) { other.m_socket = INVALID_SOCKET; }
+    CUniqueSocket& operator =(CUniqueSocket&& other) { abrupt_close(); m_socket = other.m_socket; other.m_socket = INVALID_SOCKET; }
+    ~CUniqueSocket() { abrupt_close(); }
+
+    SOCKET get() const { return m_socket; }
+
+    void abrupt_close()
+    {
+        if (m_socket != INVALID_SOCKET) {
+            ::closesocket(m_socket);
+            m_socket = INVALID_SOCKET;
+        }
+    }
+
+    void graceful_close()
+    {
+        if (m_socket != INVALID_SOCKET) {
+            ::shutdown(m_socket, SD_BOTH);
+            ::closesocket(m_socket);
+            m_socket = INVALID_SOCKET;
+        }
+    }
+
+private:
+    SOCKET    m_socket;
+};
+
 class CConnection {
 public:
-    CConnection(SOCKET conn_sock) : m_conn_sock(conn_sock) {}
-    CConnection(const CConnection&) = delete;
-    CConnection& operator =(const CConnection&) = delete;
-    ~CConnection() { close_sock(); }
+    CConnection(CUniqueSocket&& usock) : m_usock(std::move(usock)) {}
 
     void run()
     {
         char command[32769];
-        memset(command, 0, sizeof(command));
+        std::memset(command, 0, sizeof(command));
         int where = 0;
 
         do {
             int max_read = (int)sizeof(command) - 1 - where;
             if (max_read < 1) {
                 std::fprintf(stderr, "recv: command too long\n");
-                close_sock();
+                m_usock.abrupt_close();
                 return;
             }
 
-            int res = recv(m_conn_sock, command + where, max_read, 0);
+            int res = ::recv(m_usock.get(), command + where, max_read, 0);
 
             if (res < 0) {
                 Win32_perror("recv");
-                close_sock();
+                m_usock.abrupt_close();
                 return;
             }
             if (res == 0) {
                 std::fprintf(stderr, "recv: connection closed\n");
-                close_sock();
+                m_usock.abrupt_close();
                 return;
             }
 
             where += res;
 
-        } while (memchr(command, 0, where) == nullptr && memchr(command, '\n', where) == nullptr);
+        } while (std::memchr(command, 0, where) == nullptr && std::memchr(command, '\n', where) == nullptr);
 
         /* there must be a single \n, right at the end */
-        char *lf = strchr(command, '\n');
+        char *lf = std::strchr(command, '\n');
         if (!lf || lf - command != (int)strlen(command) - 1) {
             std::fprintf(stderr, "CConnection::run: invalid command terminating character\n");
-            close_sock();
+            m_usock.abrupt_close();
             return;
         }
 
@@ -168,7 +197,7 @@ public:
 
         PROCESS_INFORMATION pi;
         if (start_command(command, pi) != 0) {
-            close_sock();
+            m_usock.abrupt_close();
             return;
         }
 
@@ -176,21 +205,11 @@ public:
         ::CloseHandle(pi.hProcess);
         ::CloseHandle(pi.hThread);
 
-        close_sock();
+        m_usock.graceful_close();
     }
 
 private:
-    void close_sock()
-    {
-        if (m_conn_sock != INVALID_SOCKET) {
-            ::shutdown(m_conn_sock, SD_BOTH);
-            ::closesocket(m_conn_sock);
-            m_conn_sock = INVALID_SOCKET;
-        }
-    }
-
-private:
-    SOCKET    m_conn_sock;
+    CUniqueSocket   m_usock;
 };
 
 std::string get_temp_filename(DWORD unique)
@@ -246,7 +265,7 @@ int main()
     int namelen = sizeof(serv_addr);
     if (::getsockname(sock, (sockaddr *)&serv_addr, &namelen) != 0) { Win32_perror("getsockname"); std::exit(EXIT_FAILURE); }
 
-    if (::listen(sock, 50) != 0) { Win32_perror("listen"); std::exit(EXIT_FAILURE); }
+    if (::listen(sock, SOMAXCONN_HINT(1000)) != 0) { Win32_perror("listen"); std::exit(EXIT_FAILURE); }
 
     WSAEVENT accept_event = ::CreateEvent(NULL, FALSE, FALSE, NULL);
     ::WSAEventSelect(sock, accept_event, FD_ACCEPT);
@@ -269,11 +288,12 @@ int main()
     };
     std::vector<ThreadConnection> vTConn;
 
+    bool network_ok = true;
     while (1) {
-        HANDLE wait_handles[2] = { accept_event, pi.hProcess };
-        DWORD wr = ::WaitForMultipleObjects(2, wait_handles, FALSE, INFINITE);
+        HANDLE wait_handles[2] = { pi.hProcess, accept_event };
+        DWORD wr = ::WaitForMultipleObjects(network_ok ? 2 : 1, wait_handles, FALSE, INFINITE);
         switch (wr) {
-        case WAIT_OBJECT_0:
+        case WAIT_OBJECT_0 + 1:
             {
                 struct sockaddr_in conn_addr;
                 int conn_addr_len = (int)sizeof(conn_addr);
@@ -284,18 +304,34 @@ int main()
                     case WSAEINPROGRESS:
                     case WSAEWOULDBLOCK:
                         break;
+                    case WSAENOBUFS:
+                    case WSAEMFILE:
+                        // there is not much we can do, except notifying the user and
+                        // hoping things will get better later
+                        Win32_perror("accept");
+                        break;
+                    case WSAENETDOWN:
+                        // this is really bad, but we will try to continue to wait for bash to terminate
+                        Win32_perror("accept");
+                        network_ok = false;
+                        ::closesocket(sock);
+                        sock = INVALID_SOCKET;
+                        ::CloseHandle(accept_event);
+                        accept_event = INVALID_HANDLE_VALUE;
+                        break;
                     default:
                         Win32_perror("accept");
                         std::quick_exit(EXIT_FAILURE);
                     }
                 } else {
+                    CUniqueSocket usock(conn);
                     // Winsock is designed by monkeys:
-                    ::WSAEventSelect(conn, NULL, 0);
+                    ::WSAEventSelect(usock.get(), NULL, 0);
                     unsigned long nonblocking = 0;
-                    if (::ioctlsocket(conn, FIONBIO, &nonblocking) != 0) {
+                    if (::ioctlsocket(usock.get(), FIONBIO, &nonblocking) != 0) {
                         Win32_perror("set socket to non-blocking");
                     } else {
-                        ThreadConnection tc{ std::make_unique<CConnection>(conn), std::thread() };
+                        ThreadConnection tc{ std::make_unique<CConnection>(std::move(usock)), std::thread() };
                         CConnection *pConnection = tc.m_pConn.get();
                         tc.m_thread = std::thread([=] { pConnection->run(); });
                         vTConn.push_back(std::move(tc));
@@ -303,7 +339,7 @@ int main()
                 }
                 break;
             }
-        case WAIT_OBJECT_0 + 1:
+        case WAIT_OBJECT_0:
             ::CloseHandle(pi.hProcess);
             ::CloseHandle(pi.hThread);
             std::remove(tmp_filename.c_str());
