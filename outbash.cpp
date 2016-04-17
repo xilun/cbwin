@@ -78,48 +78,48 @@ static std::string comspec = get_comspec();
 
 static void Win32_perror(const char* what)
 {
-	const int errnum = GetLastError();
-	const bool what_present = (what && *what);
+    const int errnum = GetLastError();
+    const bool what_present = (what && *what);
 
-	// Getting a proper output in the console _and_ not breaking everything
-	// else is a complete and utter mess.
-	// By default we have a raster font at least for latin based localized
-	// systems, that means SetConsoleOutputCP() will do nothing.
-	// fwprintf() targets the current mbcp, which is ANSI and not OEM.
-	// We can not just call _setmbcp(), that would have a process wide effect.
-	// A direct call to WriteConsoleW works, but won't be redirected...
-	// So the "good" solution is to convert to the console mbcs and use fprintf.
-	// Only tested on a French install, but I guess that should work properly
-	// everywhere.
-	// Obviously when you redirect you get "garbage" (OEM chars from the 90s
-	// in a file you will probably never read with that encoding) but that is
-	// what you also get with MS programs, so at least it is consistent "garbage."
+    // Getting a proper output in the console _and_ not breaking everything
+    // else is a complete and utter mess.
+    // By default we have a raster font at least for latin based localized
+    // systems, that means SetConsoleOutputCP() will do nothing.
+    // fwprintf() targets the current mbcp, which is ANSI and not OEM.
+    // We can not just call _setmbcp(), that would have a process wide effect.
+    // A direct call to WriteConsoleW works, but won't be redirected...
+    // So the "good" solution is to convert to the console mbcs and use fprintf.
+    // Only tested on a French install, but I guess that should work properly
+    // everywhere.
+    // Obviously when you redirect you get "garbage" (OEM chars from the 90s
+    // in a file you will probably never read with that encoding) but that is
+    // what you also get with MS programs, so at least it is consistent "garbage."
 
-	WCHAR *str;
-	DWORD nbWChars = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER
-									| FORMAT_MESSAGE_FROM_SYSTEM
-									| FORMAT_MESSAGE_IGNORE_INSERTS
-									| FORMAT_MESSAGE_MAX_WIDTH_MASK,
-									nullptr, (DWORD)errnum, 0, (LPWSTR)&str,
-									0, nullptr);
-	if (nbWChars == 0) {
-		fprintf(stderr, "%s%ssocket error %d (FormatMessage failed)\n",
-				what_present ? what : "",
-				what_present ? ": " : "",
-				errnum);
-	} else {
-		// Worst case would be 4 bytes per character for UTF-8
-		const int mbstr_bufsz = (int)nbWChars * 4 + 1;
-		std::unique_ptr<char[]> mbstr(new char[mbstr_bufsz]);
-		WideCharToMultiByte(GetConsoleOutputCP(), 0, str, nbWChars + 1,
-							mbstr.get(), mbstr_bufsz, nullptr, nullptr);
-		fprintf(stderr, "%s%s%s\n",
-				what_present ? what : "",
-				what_present ? ": " : "",
-				mbstr.get());
-		LocalFree(str);
-	}
-	SetLastError(errnum);
+    WCHAR *str;
+    DWORD nbWChars = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER
+                                    | FORMAT_MESSAGE_FROM_SYSTEM
+                                    | FORMAT_MESSAGE_IGNORE_INSERTS
+                                    | FORMAT_MESSAGE_MAX_WIDTH_MASK,
+                                    nullptr, (DWORD)errnum, 0, (LPWSTR)&str,
+                                    0, nullptr);
+    if (nbWChars == 0) {
+        fprintf(stderr, "%s%ssocket error %d (FormatMessage failed)\n",
+                what_present ? what : "",
+                what_present ? ": " : "",
+                errnum);
+    } else {
+        // Worst case would be 4 bytes per character for UTF-8
+        const int mbstr_bufsz = (int)nbWChars * 4 + 1;
+        std::unique_ptr<char[]> mbstr(new char[mbstr_bufsz]);
+        WideCharToMultiByte(GetConsoleOutputCP(), 0, str, nbWChars + 1,
+                            mbstr.get(), mbstr_bufsz, nullptr, nullptr);
+        fprintf(stderr, "%s%s%s\n",
+                what_present ? what : "",
+                what_present ? ": " : "",
+                mbstr.get());
+        LocalFree(str);
+    }
+    SetLastError(errnum);
 }
 
 static int start_command(const char* command, PROCESS_INFORMATION& pi)
@@ -137,7 +137,7 @@ static int start_command(const char* command, PROCESS_INFORMATION& pi)
         module = comspec.c_str();
 
     if (!::CreateProcessA(module, &cmdline[0], NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, NULL, NULL, &si, &pi)) {
-		Win32_perror("CreateProcess");
+        Win32_perror("CreateProcess");
         std::fprintf(stderr, "CreateProcess failed (%d) for command: %s\n", GetLastError(), command);
         return 1;
     }
