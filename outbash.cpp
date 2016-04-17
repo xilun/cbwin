@@ -47,7 +47,7 @@ int start_command(const char* command, PROCESS_INFORMATION& pi)
     ZeroMemory(&pi, sizeof(pi));
 
     std::string cmd(command);
-    if (!::CreateProcessA(NULL, &cmd[0], NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+    if (!::CreateProcessA(NULL, &cmd[0], NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, NULL, NULL, &si, &pi)) {
         std::fprintf(stderr, "CreateProcess failed (%d) for command: %s\n", GetLastError(), command);
         return 1;
     }
