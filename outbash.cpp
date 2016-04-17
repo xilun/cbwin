@@ -359,7 +359,8 @@ int main()
     bool network_ok = true;
     while (1) {
         HANDLE wait_handles[2] = { pi.hProcess, accept_event };
-        DWORD wr = ::WaitForMultipleObjects(network_ok ? 2 : 1, wait_handles, FALSE, INFINITE);
+        DWORD timeout = vTConn.empty() ? INFINITE : 5000;
+        DWORD wr = ::WaitForMultipleObjects(network_ok ? 2 : 1, wait_handles, FALSE, timeout);
         if (wr == WAIT_FAILED) {
             Win32_perror("WaitForMultipleObjects");
             std::quick_exit(EXIT_FAILURE);
@@ -368,6 +369,9 @@ int main()
         reap_connections(vTConn);
 
         switch (wr) {
+        case WAIT_TIMEOUT:
+            /* nothing to do, it was just for reap_connections() */
+            break;
         case WAIT_OBJECT_0 + 1:
             {
                 struct sockaddr_in conn_addr;
