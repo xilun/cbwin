@@ -165,8 +165,14 @@ public:
     CUniqueSocket(SOCKET conn_sock) : m_socket(conn_sock) {}
     CUniqueSocket(const CUniqueSocket&) = delete;
     CUniqueSocket& operator =(const CUniqueSocket&) = delete;
-    CUniqueSocket(CUniqueSocket&& other) : m_socket(other.m_socket) { other.m_socket = INVALID_SOCKET; }
-    CUniqueSocket& operator =(CUniqueSocket&& other) { abrupt_close(); m_socket = other.m_socket; other.m_socket = INVALID_SOCKET; }
+    CUniqueSocket(CUniqueSocket&& other) noexcept : m_socket(other.m_socket) { other.m_socket = INVALID_SOCKET; }
+    CUniqueSocket& operator =(CUniqueSocket&& other) noexcept
+    {
+        abrupt_close();
+        m_socket = other.m_socket;
+        other.m_socket = INVALID_SOCKET;
+        return *this;
+    }
     ~CUniqueSocket() { abrupt_close(); }
 
     SOCKET get() const { return m_socket; }
@@ -194,7 +200,7 @@ private:
 
 class CConnection {
 public:
-    CConnection(CUniqueSocket&& usock) : m_usock(std::move(usock)) {}
+    CConnection(CUniqueSocket&& usock) noexcept : m_usock(std::move(usock)) {}
 
     void run()
     {
@@ -262,7 +268,8 @@ static std::string get_temp_filename(DWORD unique)
     char buffer_path_name[TMP_BUFLEN];
     DWORD res = GetTempPathA(TMP_BUFLEN, buffer_path_name);
     if (res == 0) { Win32_perror("GetTempPath"); std::exit(EXIT_FAILURE); }
-    std::snprintf(buffer_path_name + res, TMP_BUFLEN - res, "outbash.%u", (unsigned int)unique);
+    int pres = std::snprintf(buffer_path_name + res, TMP_BUFLEN - res, "outbash.%u", (unsigned int)unique);
+    if (pres <= 0 || pres >= (int)TMP_BUFLEN - (int)res) { std::fprintf(stderr, "get_temp_filename: snprintf failed\n"); }
     return buffer_path_name;
 }
 
@@ -281,6 +288,35 @@ static std::string convert_to_wsl_filename(const std::string& win32_filename)
     result += &win32_filename[3];
     std::replace(result.begin(), result.end(), '\\', '/');
     return result;
+}
+
+struct ThreadConnection {
+    std::unique_ptr<CConnection>    m_pConn;
+    std::thread                     m_thread;
+};
+
+static void reap_connections(std::vector<ThreadConnection>& vTConn)
+{
+    std::vector<ThreadConnection> remain_conns;
+
+    for (auto& tc : vTConn) {
+        HANDLE tHdl = (HANDLE)tc.m_thread.native_handle();
+        DWORD exit_code;
+        if (GetExitCodeThread(tHdl, &exit_code) == 0) {
+            Win32_perror("GetExitCodeThread");
+            // what can we do? I guess leaking is not so bad in that case
+            tc.m_thread.detach();
+            tc.m_pConn.release();
+            continue;
+        }
+        if (exit_code == STILL_ACTIVE) {
+            remain_conns.push_back(std::move(tc));
+        } else {
+            tc.m_thread.join();
+        }
+    }
+
+    std::swap(vTConn, remain_conns);
 }
 
 int main()
@@ -302,6 +338,7 @@ int main()
     if (::listen(sock, SOMAXCONN_HINT(1000)) != 0) { Win32_perror("listen"); std::exit(EXIT_FAILURE); }
 
     WSAEVENT accept_event = ::CreateEvent(NULL, FALSE, FALSE, NULL);
+    if (accept_event == NULL) { Win32_perror("CreateEvent"); std::exit(EXIT_FAILURE); }
     ::WSAEventSelect(sock, accept_event, FD_ACCEPT);
 
     std::string tmp_filename = get_temp_filename(GetCurrentProcessId());
@@ -317,16 +354,19 @@ int main()
     if (start_command(("bash --rcfile " + wsl_tmp_filename).c_str(), pi) != 0) { std::remove(tmp_filename.c_str()); std::exit(EXIT_FAILURE); }
     ::CloseHandle(pi.hThread);
 
-    struct ThreadConnection {
-        std::unique_ptr<CConnection>    m_pConn;
-        std::thread                     m_thread;
-    };
     std::vector<ThreadConnection> vTConn;
 
     bool network_ok = true;
     while (1) {
         HANDLE wait_handles[2] = { pi.hProcess, accept_event };
         DWORD wr = ::WaitForMultipleObjects(network_ok ? 2 : 1, wait_handles, FALSE, INFINITE);
+        if (wr == WAIT_FAILED) {
+            Win32_perror("WaitForMultipleObjects");
+            std::quick_exit(EXIT_FAILURE);
+        }
+
+        reap_connections(vTConn);
+
         switch (wr) {
         case WAIT_OBJECT_0 + 1:
             {
@@ -382,10 +422,6 @@ int main()
             ::CloseHandle(pi.hProcess);
             std::remove(tmp_filename.c_str());
             std::quick_exit(EXIT_SUCCESS);
-            break;
-        case WAIT_FAILED:
-            Win32_perror("WaitForMultipleObjects");
-            std::quick_exit(EXIT_FAILURE);
             break;
         }
     }
