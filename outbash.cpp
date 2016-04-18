@@ -168,9 +168,12 @@ public:
     CUniqueSocket(CUniqueSocket&& other) noexcept : m_socket(other.m_socket) { other.m_socket = INVALID_SOCKET; }
     CUniqueSocket& operator =(CUniqueSocket&& other) noexcept
     {
-        abrupt_close();
-        m_socket = other.m_socket;
-        other.m_socket = INVALID_SOCKET;
+        if (&other != this)
+        {
+            abrupt_close();
+            m_socket = other.m_socket;
+            other.m_socket = INVALID_SOCKET;
+        }
         return *this;
     }
     ~CUniqueSocket() { abrupt_close(); }
