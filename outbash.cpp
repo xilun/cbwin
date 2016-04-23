@@ -94,7 +94,7 @@ static void Win32_perror(const char* what)
                                     nullptr, (DWORD)errnum, 0, (LPWSTR)&str,
                                     0, nullptr);
     if (nbWChars == 0) {
-        fprintf(stderr, "%s%ssocket error %d (FormatMessage failed)\n",
+        fprintf(stderr, "%s%swin32 error %d (FormatMessage failed)\n",
                 what_present ? what : "",
                 what_present ? ": " : "",
                 errnum);
