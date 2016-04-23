@@ -148,7 +148,7 @@ static int init_winsock()
 
 class CUniqueSocket {
 public:
-    CUniqueSocket(SOCKET conn_sock) : m_socket(conn_sock) {}
+    CUniqueSocket(SOCKET conn_sock) noexcept : m_socket(conn_sock) {}
     CUniqueSocket(const CUniqueSocket&) = delete;
     CUniqueSocket& operator =(const CUniqueSocket&) = delete;
     CUniqueSocket(CUniqueSocket&& other) noexcept : m_socket(other.m_socket) { other.m_socket = INVALID_SOCKET; }
@@ -162,11 +162,11 @@ public:
         }
         return *this;
     }
-    ~CUniqueSocket() { abrupt_close(); }
+    ~CUniqueSocket() noexcept { abrupt_close(); }
 
-    SOCKET get() const { return m_socket; }
+    SOCKET get() const noexcept { return m_socket; }
 
-    void abrupt_close()
+    void abrupt_close() noexcept
     {
         if (m_socket != INVALID_SOCKET) {
             ::closesocket(m_socket);
@@ -174,7 +174,7 @@ public:
         }
     }
 
-    void graceful_close()
+    void graceful_close() noexcept
     {
         if (m_socket != INVALID_SOCKET) {
             ::shutdown(m_socket, SD_BOTH);
