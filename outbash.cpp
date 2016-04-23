@@ -35,6 +35,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <clocale>
+#include <mbctype.h>
+
+#include "utf.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -43,57 +47,44 @@ static bool is_ascii_letter(char c)
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
-static char to_ascii_lower(char c)
+template <typename T>
+static T to_ascii_lower(T c)
 {
-    return (c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c;
+    return (c >= (T)'A' && c <= (T)'Z') ? c - (T)'A' + (T)'a' : c;
 }
 
-static std::string ltrim(const std::string& s)
+static std::wstring ltrim(const std::wstring& s)
 {
-    std::size_t first = s.find_first_not_of(" \t\n\v\f\r");
-    return (first == std::string::npos) ? "" : s.substr(first);
+    std::size_t first = s.find_first_not_of(L" \t\n\v\f\r");
+    return (first == std::wstring::npos) ? L"" : s.substr(first);
 }
 
-static std::string str_to_ascii_lower(const std::string& s)
+static std::wstring str_to_ascii_lower(const std::wstring& s)
 {
-    std::string result(s);
-    std::transform(result.begin(), result.end(), result.begin(), to_ascii_lower);
+    std::wstring result(s);
+    std::transform(result.begin(), result.end(), result.begin(), to_ascii_lower<wchar_t>);
     return result;
 }
 
-static std::string get_comspec()
+static std::wstring get_comspec()
 {
-    char buf[MAX_PATH+1];
-    UINT res = GetEnvironmentVariableA("ComSpec", buf, MAX_PATH+1);
+    wchar_t buf[MAX_PATH+1];
+    UINT res = GetEnvironmentVariableW(L"ComSpec", buf, MAX_PATH+1);
     if (res == 0 && GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
-        res = GetSystemDirectoryA(buf, MAX_PATH+1);
+        res = GetSystemDirectoryW(buf, MAX_PATH+1);
         if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "GetSystemDirectory error\n"); std::abort(); }
-        return buf + std::string("\\cmd.exe");
+        return buf + std::wstring(L"\\cmd.exe");
     } else {
         if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "GetEnvironmentVariable ComSpec error\n"); std::abort(); }
         return buf;
     }
 }
-static std::string comspec = get_comspec();
+static const std::wstring comspec = get_comspec();
 
 static void Win32_perror(const char* what)
 {
     const int errnum = GetLastError();
     const bool what_present = (what && *what);
-
-    // Getting a proper output in the console _and_ not breaking everything
-    // else is a complete and utter mess.
-    // By default we have a raster font at least for latin based localized
-    // systems, that means SetConsoleOutputCP() will do nothing.
-    // fwprintf() targets the current mbcp, which is ANSI and not OEM.
-    // We can not just call _setmbcp(), that would have a process wide effect.
-    // A direct call to WriteConsoleW works, but won't be redirected...
-    // So the "good" solution is to convert to the console mbcs and use fprintf.
-    // Only tested on a French install, but I guess that should work properly
-    // everywhere.
-    // Obviously when you redirect you get "garbage" (OEM chars from the 90s
-    // in a file you will probably never read with that encoding) but that is
-    // what you also get with MS programs, so at least it is consistent "garbage."
 
     WCHAR *str;
     DWORD nbWChars = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER
@@ -108,37 +99,32 @@ static void Win32_perror(const char* what)
                 what_present ? ": " : "",
                 errnum);
     } else {
-        // Worst case would be 4 bytes per character for UTF-8
-        const int mbstr_bufsz = (int)nbWChars * 4 + 1;
-        std::unique_ptr<char[]> mbstr(new char[mbstr_bufsz]);
-        WideCharToMultiByte(GetConsoleOutputCP(), 0, str, nbWChars + 1,
-                            mbstr.get(), mbstr_bufsz, nullptr, nullptr);
-        fprintf(stderr, "%s%s%s\n",
+        fprintf(stderr, "%s%s%S\n",
                 what_present ? what : "",
                 what_present ? ": " : "",
-                mbstr.get());
+                str);
         LocalFree(str);
     }
     SetLastError(errnum);
 }
 
-static int start_command(const char* command, PROCESS_INFORMATION& pi)
+static int start_command(const wchar_t* command, PROCESS_INFORMATION& out_pi)
 {
-    STARTUPINFO si;
+    STARTUPINFOW si;
 
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
-    ZeroMemory(&pi, sizeof(pi));
+    ZeroMemory(&out_pi, sizeof(out_pi));
 
-    std::string cmdline = ltrim(command);
+    std::wstring cmdline = ltrim(command);
 
-    const char *module = NULL;
-    if (str_to_ascii_lower(cmdline.substr(0, 4)) == "cmd ")
+    const wchar_t *module = NULL;
+    if (str_to_ascii_lower(cmdline.substr(0, 4)) == L"cmd ")
         module = comspec.c_str();
 
-    if (!::CreateProcessA(module, &cmdline[0], NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, NULL, NULL, &si, &pi)) {
+    if (!::CreateProcessW(module, &cmdline[0], NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, NULL, NULL, &si, &out_pi)) {
         Win32_perror("CreateProcess");
-        std::fprintf(stderr, "CreateProcess failed (%d) for command: %s\n", GetLastError(), command);
+        std::fprintf(stderr, "CreateProcess failed (%d) for command: %S\n", GetLastError(), command);
         return 1;
     }
 
@@ -207,7 +193,7 @@ public:
 
     void run()
     {
-        char command[32769];
+        char command[32769*3];
         std::memset(command, 0, sizeof(command));
         int where = 0;
 
@@ -245,11 +231,13 @@ public:
         }
 
         *lf = '\0';
+
+        /* there can be a single \r at the end, just before \n */
         if (lf != command && lf[-1] == '\r')
             lf[-1] = '\0';
 
         PROCESS_INFORMATION pi;
-        if (start_command(command, pi) != 0) {
+        if (start_command(utf::widen(command).c_str(), pi) != 0) {
             m_usock.abrupt_close();
             return;
         }
@@ -322,8 +310,19 @@ static void reap_connections(std::vector<ThreadConnection>& vTConn)
     std::swap(vTConn, remain_conns);
 }
 
+static void init_locale_console_cp()
+{
+    UINT cp = GetConsoleOutputCP();
+    char buf[16];
+    snprintf(buf, 16, ".%u", cp);
+    buf[15] = 0;
+    std::setlocale(LC_ALL, buf);
+    _setmbcp((int)cp);
+}
+
 int main()
 {
+    init_locale_console_cp();
     if (init_winsock() != 0) std::exit(EXIT_FAILURE);
 
     SOCKET sock = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -354,7 +353,7 @@ int main()
     std::fclose(f);
 
     PROCESS_INFORMATION pi;
-    if (start_command(("bash --rcfile " + wsl_tmp_filename).c_str(), pi) != 0) { std::remove(tmp_filename.c_str()); std::exit(EXIT_FAILURE); }
+    if (start_command(utf::widen("bash --rcfile " + wsl_tmp_filename).c_str(), pi) != 0) { std::remove(tmp_filename.c_str()); std::exit(EXIT_FAILURE); }
     ::CloseHandle(pi.hThread);
 
     std::vector<ThreadConnection> vTConn;
