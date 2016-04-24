@@ -66,6 +66,26 @@ static std::wstring wstr_to_ascii_lower(std::wstring s)
     return s;
 }
 
+static bool is_cmd_line_sep(wchar_t c)
+{
+    return c == L' ' || c == L'\t';
+}
+
+static const wchar_t* get_cmd_line_params()
+{
+    const wchar_t* p = GetCommandLineW();
+    if (p == nullptr)
+        return L"";
+    // we use the same rule as the CRT parser to delimit argv[0]:
+    for (bool quoted = false; *p != L'\0' && (quoted || !is_cmd_line_sep(*p)); p++) {
+        if (*p == L'"')
+            quoted = !quoted;
+    }
+    while (is_cmd_line_sep(*p))
+        p++;
+    return p; // pointer to the first param (if any) in the command line
+}
+
 static std::wstring get_comspec()
 {
     wchar_t buf[MAX_PATH+1];
@@ -264,6 +284,7 @@ private:
     CUniqueSocket   m_usock;
 };
 
+// return temporary filename (in UTF-8)
 static std::string get_temp_filename(DWORD unique)
 {
     #define TMP_BUFLEN (MAX_PATH+2)
@@ -273,6 +294,7 @@ static std::string get_temp_filename(DWORD unique)
     return utf::narrow(w_temp_path) + "outbash." + std::to_string((unsigned int)unique);
 }
 
+// convert Win32 filename to WSL filename (both in UTF-8)
 static std::string convert_to_wsl_filename(const std::string& win32_filename)
 {
     if (win32_filename.length() <= 3
@@ -360,9 +382,13 @@ int main()
     std::fprintf(f, ". /etc/bash.bashrc\n");
     std::fprintf(f, ". ~/.bashrc\n");
     std::fclose(f);
+    // XXX check fprintf/fclose errors
 
     PROCESS_INFORMATION pi;
-    if (start_command(utf::widen("bash --rcfile \"" + wsl_tmp_filename + "\"").c_str(), pi) != 0) {
+    if (start_command(
+            (utf::widen("bash --rcfile \"" + wsl_tmp_filename + "\" ")
+              + get_cmd_line_params()).c_str(),
+            pi) != 0) {
         _wremove(utf::widen(tmp_filename).c_str());
         std::exit(EXIT_FAILURE);
     }
