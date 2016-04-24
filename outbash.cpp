@@ -448,7 +448,7 @@ int main()
                     ::WSAEventSelect(usock.get(), NULL, 0);
                     unsigned long nonblocking = 0;
                     if (::ioctlsocket(usock.get(), FIONBIO, &nonblocking) != 0) {
-                        Win32_perror("set socket to non-blocking");
+                        Win32_perror("set socket to blocking");
                     } else {
                         try {
                             ThreadConnection tc{ std::make_unique<CConnection>(std::move(usock)), std::thread() };
