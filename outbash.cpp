@@ -368,7 +368,7 @@ int main()
     int namelen = sizeof(serv_addr);
     if (::getsockname(sock, (sockaddr *)&serv_addr, &namelen) != 0) { Win32_perror("getsockname"); std::exit(EXIT_FAILURE); }
 
-    if (::listen(sock, SOMAXCONN_HINT(1000)) != 0) { Win32_perror("listen"); std::exit(EXIT_FAILURE); }
+    if (::listen(sock, SOMAXCONN_HINT(600)) != 0) { Win32_perror("listen"); std::exit(EXIT_FAILURE); }
 
     WSAEVENT accept_event = ::CreateEvent(NULL, FALSE, FALSE, NULL);
     if (accept_event == NULL) { Win32_perror("CreateEvent"); std::exit(EXIT_FAILURE); }
