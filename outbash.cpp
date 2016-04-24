@@ -32,6 +32,7 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <exception>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -192,6 +193,17 @@ public:
     CConnection(CUniqueSocket&& usock) noexcept : m_usock(std::move(usock)) {}
 
     void run()
+    {
+        try {
+            _run();
+        } catch (std::exception& e) {
+            std::fprintf(stderr, "CConnection::run() catched exception: %s\n", e.what());
+            m_usock.abrupt_close();
+        }
+    }
+
+private:
+    void _run()
     {
         char command[32769*3];
         std::memset(command, 0, sizeof(command));
