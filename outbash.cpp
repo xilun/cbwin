@@ -363,7 +363,7 @@ int main()
     std::fclose(f);
 
     PROCESS_INFORMATION pi;
-    if (start_command(utf::widen("bash --rcfile " + wsl_tmp_filename).c_str(), pi) != 0) {
+    if (start_command(utf::widen("bash --rcfile \"" + wsl_tmp_filename + "\"").c_str(), pi) != 0) {
         _wremove(utf::widen(tmp_filename).c_str());
         std::exit(EXIT_FAILURE);
     }
