@@ -33,6 +33,7 @@
 #include <string>
 #include <algorithm>
 #include <exception>
+#include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -42,6 +43,8 @@
 #include "utf.h"
 
 #pragma comment(lib, "Ws2_32.lib")
+
+using std::size_t;
 
 static bool is_ascii_letter(char c)
 {
@@ -56,7 +59,7 @@ static T to_ascii_lower(T c)
 
 static std::wstring ltrim(const std::wstring& s)
 {
-    std::size_t first = s.find_first_not_of(L" \t\n\v\f\r");
+    size_t first = s.find_first_not_of(L" \t\n\v\f\r");
     return (first == std::wstring::npos) ? L"" : s.substr(first);
 }
 
@@ -168,7 +171,7 @@ static int init_winsock()
 
 class CUniqueSocket {
 public:
-    CUniqueSocket(SOCKET conn_sock) noexcept : m_socket(conn_sock) {}
+    explicit CUniqueSocket(SOCKET conn_sock) noexcept : m_socket(conn_sock) {}
     CUniqueSocket(const CUniqueSocket&) = delete;
     CUniqueSocket& operator =(const CUniqueSocket&) = delete;
     CUniqueSocket(CUniqueSocket&& other) noexcept : m_socket(other.m_socket) { other.m_socket = INVALID_SOCKET; }
@@ -209,76 +212,83 @@ private:
 
 class CConnection {
 public:
-    CConnection(CUniqueSocket&& usock) noexcept : m_usock(std::move(usock)) {}
+    explicit CConnection(CUniqueSocket&& usock) noexcept : m_usock(std::move(usock)) {}
 
     void run()
     {
         try {
-            _run();
+            CActiveConnection _con(m_usock);
+            _con.run();
         } catch (const std::exception& e) {
-            std::fprintf(stderr, "CConnection::run() catched exception: %s\n", e.what());
-            m_usock.abrupt_close();
+            std::fprintf(stderr, "CConnection::run() exception: %s\n", e.what());
         }
+        m_usock.abrupt_close();
     }
 
 private:
-    void _run()
-    {
-        char command[32769*3];
-        std::memset(command, 0, sizeof(command));
-        int where = 0;
+    class CActiveConnection {
+    public:
+        explicit CActiveConnection(CUniqueSocket& usock) noexcept : m_usock(usock), m_buf() {}
 
-        do {
-            int max_read = (int)sizeof(command) - 1 - where;
-            if (max_read < 1) {
-                std::fprintf(stderr, "recv: command too long\n");
-                m_usock.abrupt_close();
-                return;
+        std::string recv_line()
+        {
+            std::string result;
+            while (1) {
+                char* nlptr = (char*)std::memchr(&m_buf[0], '\n', m_buf.size());
+                if (nlptr) {
+                    int pos = (int)(nlptr - &m_buf[0]);
+                    result.append(&m_buf[0], pos);
+                    if (!result.empty() && result.back() == '\r')
+                        result.pop_back();
+                    m_buf.replace(0, pos + 1, "");
+                    return result;
+                } else {
+                    result.append(m_buf);
+                    m_buf.clear();
+                    if (result.size() > line_supported_length)
+                        throw std::runtime_error("line too long received from peer");
+                }
+
+                assert(m_buf.size() == 0);
+                m_buf.resize(8192);
+                int res = ::recv(m_usock.get(), &m_buf[0], (int)m_buf.size(), 0);
+
+                if (res < 0) {
+                    Win32_perror("recv");
+                    m_buf.clear();
+                    throw std::runtime_error("recv() returned an error");
+                }
+
+                m_buf.resize(res);
+
+                if (res == 0)
+                    throw std::runtime_error("a connection closed too early");
+
+                if (std::memchr(&m_buf[0], 0, m_buf.size()))
+                    throw std::runtime_error("nul byte received from peer");
             }
-
-            int res = ::recv(m_usock.get(), command + where, max_read, 0);
-
-            if (res < 0) {
-                Win32_perror("recv");
-                m_usock.abrupt_close();
-                return;
-            }
-            if (res == 0) {
-                std::fprintf(stderr, "recv: connection closed\n");
-                m_usock.abrupt_close();
-                return;
-            }
-
-            where += res;
-
-        } while (std::memchr(command, 0, where) == nullptr && std::memchr(command, '\n', where) == nullptr);
-
-        /* there must be a single \n, right at the end */
-        char *lf = std::strchr(command, '\n');
-        if (!lf || lf - command != (int)strlen(command) - 1) {
-            std::fprintf(stderr, "CConnection::run: invalid command terminating character\n");
-            m_usock.abrupt_close();
-            return;
         }
 
-        *lf = '\0';
+        void run()
+        {
+            std::string line = recv_line();
 
-        /* there can be a single \r at the end, just before \n */
-        if (lf != command && lf[-1] == '\r')
-            lf[-1] = '\0';
+            PROCESS_INFORMATION pi;
+            if (start_command(utf::widen(line).c_str(), pi) != 0)
+                return;
 
-        PROCESS_INFORMATION pi;
-        if (start_command(utf::widen(command).c_str(), pi) != 0) {
-            m_usock.abrupt_close();
-            return;
+            ::CloseHandle(pi.hThread);
+            ::WaitForSingleObject(pi.hProcess, INFINITE);
+            ::CloseHandle(pi.hProcess);
+
+            m_usock.graceful_close();
         }
 
-        ::CloseHandle(pi.hThread);
-        ::WaitForSingleObject(pi.hProcess, INFINITE);
-        ::CloseHandle(pi.hProcess);
-
-        m_usock.graceful_close();
-    }
+    private:
+        const size_t line_supported_length = 32768*3 + 16;     // indicative approx max length (the size can grew to at least that)
+        CUniqueSocket&  m_usock;
+        std::string     m_buf;
+    };
 
 private:
     CUniqueSocket   m_usock;
