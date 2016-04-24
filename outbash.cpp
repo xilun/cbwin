@@ -196,7 +196,7 @@ public:
     {
         try {
             _run();
-        } catch (std::exception& e) {
+        } catch (const std::exception& e) {
             std::fprintf(stderr, "CConnection::run() catched exception: %s\n", e.what());
             m_usock.abrupt_close();
         }
@@ -268,12 +268,10 @@ private:
 static std::string get_temp_filename(DWORD unique)
 {
     #define TMP_BUFLEN (MAX_PATH+2)
-    char buffer_path_name[TMP_BUFLEN];
-    DWORD res = GetTempPathA(TMP_BUFLEN, buffer_path_name);
+    wchar_t w_temp_path[TMP_BUFLEN];
+    DWORD res = GetTempPathW(TMP_BUFLEN, w_temp_path);
     if (res == 0) { Win32_perror("GetTempPath"); std::exit(EXIT_FAILURE); }
-    int pres = std::snprintf(buffer_path_name + res, TMP_BUFLEN - res, "outbash.%u", (unsigned int)unique);
-    if (pres <= 0 || pres >= (int)TMP_BUFLEN - (int)res) { std::fprintf(stderr, "get_temp_filename: snprintf failed\n"); }
-    return buffer_path_name;
+    return utf::narrow(w_temp_path) + "outbash." + std::to_string((unsigned int)unique);
 }
 
 static std::string convert_to_wsl_filename(const std::string& win32_filename)
@@ -326,7 +324,7 @@ static void init_locale_console_cp()
 {
     UINT cp = GetConsoleOutputCP();
     char buf[16];
-    snprintf(buf, 16, ".%u", cp);
+    std::snprintf(buf, 16, ".%u", cp);
     buf[15] = 0;
     std::setlocale(LC_ALL, buf);
     _setmbcp((int)cp);
@@ -357,15 +355,18 @@ int main()
 
     std::string tmp_filename = get_temp_filename(GetCurrentProcessId());
     std::string wsl_tmp_filename = convert_to_wsl_filename(tmp_filename);
-    std::FILE *f = std::fopen(tmp_filename.c_str(), "wb");
-    if (!f) { std::fprintf(stderr, "could not open temporary file %s\n", tmp_filename.c_str()); std::exit(EXIT_FAILURE); }
+    std::FILE *f = _wfopen(utf::widen(tmp_filename).c_str(), L"wb");
+    if (!f) { std::fprintf(stderr, "could not open temporary file %S\n", utf::widen(tmp_filename).c_str()); std::exit(EXIT_FAILURE); }
     std::fprintf(f, "export OUTBASH_PORT=%u\n", (unsigned)ntohs(serv_addr.sin_port));
     std::fprintf(f, ". /etc/bash.bashrc\n");
     std::fprintf(f, ". ~/.bashrc\n");
     std::fclose(f);
 
     PROCESS_INFORMATION pi;
-    if (start_command(utf::widen("bash --rcfile " + wsl_tmp_filename).c_str(), pi) != 0) { std::remove(tmp_filename.c_str()); std::exit(EXIT_FAILURE); }
+    if (start_command(utf::widen("bash --rcfile " + wsl_tmp_filename).c_str(), pi) != 0) {
+        _wremove(utf::widen(tmp_filename).c_str());
+        std::exit(EXIT_FAILURE);
+    }
     ::CloseHandle(pi.hThread);
 
     std::vector<ThreadConnection> vTConn;
@@ -438,7 +439,7 @@ int main()
             }
         case WAIT_OBJECT_0:
             ::CloseHandle(pi.hProcess);
-            std::remove(tmp_filename.c_str());
+            _wremove(utf::widen(tmp_filename).c_str());
             std::quick_exit(EXIT_SUCCESS);
             break;
         }
