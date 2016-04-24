@@ -60,11 +60,10 @@ static std::wstring ltrim(const std::wstring& s)
     return (first == std::wstring::npos) ? L"" : s.substr(first);
 }
 
-static std::wstring str_to_ascii_lower(const std::wstring& s)
+static std::wstring wstr_to_ascii_lower(std::wstring s)
 {
-    std::wstring result(s);
-    std::transform(result.begin(), result.end(), result.begin(), to_ascii_lower<wchar_t>);
-    return result;
+    std::transform(s.begin(), s.end(), s.begin(), to_ascii_lower<wchar_t>);
+    return s;
 }
 
 static std::wstring get_comspec()
@@ -120,7 +119,7 @@ static int start_command(const wchar_t* command, PROCESS_INFORMATION& out_pi)
     std::wstring cmdline = ltrim(command);
 
     const wchar_t *module = NULL;
-    if (str_to_ascii_lower(cmdline.substr(0, 4)) == L"cmd ")
+    if (wstr_to_ascii_lower(cmdline.substr(0, 4)) == L"cmd ")
         module = comspec.c_str();
 
     if (!::CreateProcessW(module, &cmdline[0], NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, NULL, NULL, &si, &out_pi)) {
