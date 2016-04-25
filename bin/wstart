@@ -1,3 +1,2 @@
 #!/bin/bash
-printf '%s\n' "cmd /C start $*" | netcat 127.0.0.1 "$OUTBASH_PORT"
-
+printf 'run:%s\n\n' "cmd /C start $*" | netcat 127.0.0.1 "$OUTBASH_PORT"

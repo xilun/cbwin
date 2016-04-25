@@ -37,6 +37,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cstdint>
 #include <clocale>
 #include <mbctype.h>
 
@@ -45,28 +46,18 @@
 #pragma comment(lib, "Ws2_32.lib")
 
 using std::size_t;
+using std::uint16_t;
 
-static bool is_ascii_letter(char c)
+template <typename CharT>
+static bool is_ascii_letter(CharT c)
 {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    return (c >= (CharT)'a' && c <= (CharT)'z') || (c >= (CharT)'A' && c <= (CharT)'Z');
 }
 
-template <typename T>
-static T to_ascii_lower(T c)
+template <typename CharT>
+static CharT to_ascii_lower(CharT c)
 {
-    return (c >= (T)'A' && c <= (T)'Z') ? c - (T)'A' + (T)'a' : c;
-}
-
-static std::wstring ltrim(const std::wstring& s)
-{
-    size_t first = s.find_first_not_of(L" \t\n\v\f\r");
-    return (first == std::wstring::npos) ? L"" : s.substr(first);
-}
-
-static std::wstring wstr_to_ascii_lower(std::wstring s)
-{
-    std::transform(s.begin(), s.end(), s.begin(), to_ascii_lower<wchar_t>);
-    return s;
+    return (c >= (CharT)'A' && c <= (CharT)'Z') ? c - (CharT)'A' + (CharT)'a' : c;
 }
 
 static bool is_cmd_line_sep(wchar_t c)
@@ -74,12 +65,17 @@ static bool is_cmd_line_sep(wchar_t c)
     return c == L' ' || c == L'\t';
 }
 
+static bool startswith(const std::string& s, const std::string& start)
+{
+    return !s.compare(0, start.size(), start);
+}
+
 static const wchar_t* get_cmd_line_params()
 {
     const wchar_t* p = GetCommandLineW();
     if (p == nullptr)
         return L"";
-    // we use the same rule as the CRT parser to delimit argv[0]:
+    // we use the same rules as the CRT parser to delimit argv[0]:
     for (bool quoted = false; *p != L'\0' && (quoted || !is_cmd_line_sep(*p)); p++) {
         if (*p == L'"')
             quoted = !quoted;
@@ -131,7 +127,34 @@ static void Win32_perror(const char* what)
     SetLastError(errnum);
 }
 
-static int start_command(const wchar_t* command, PROCESS_INFORMATION& out_pi)
+int wstr_case_ascii_ncmp(const wchar_t* s1, const wchar_t* s2, size_t n)
+{
+    wchar_t c1, c2;
+    do {
+        c1 = *s1++;
+        c2 = *s2++;
+        if (n == 0)
+            c1 = L'\0';
+        n--;
+    } while (c1 != L'\0' && to_ascii_lower(c1) == to_ascii_lower(c2));
+
+    return ((uint16_t)c1 > (uint16_t)c2) ? 1
+        : (c1 == c2 ? 0
+           : -1);
+}
+
+// PathIsRelative is, ahem, ... interesting? (like a lot of Win32 stuff, actually)
+// So we implement our own (hopefully) non crazy check:
+static bool path_is_really_absolute(const wchar_t* path)
+{
+    if (*path == L'\\')
+        return true;
+    if (is_ascii_letter(path[0]) && path[1] == L':' && path[2] == L'\\')
+        return true;
+    return false;
+}
+
+static int start_command(std::wstring cmdline, const wchar_t* dir, PROCESS_INFORMATION& out_pi)
 {
     STARTUPINFOW si;
 
@@ -139,15 +162,23 @@ static int start_command(const wchar_t* command, PROCESS_INFORMATION& out_pi)
     si.cb = sizeof(si);
     ZeroMemory(&out_pi, sizeof(out_pi));
 
-    std::wstring cmdline = ltrim(command);
+    const wchar_t* wdir = nullptr;
+    if (dir != nullptr && *dir != L'\0') {
+        // CreateProcess will happily use a relative, but we don't want to
+        if (!path_is_really_absolute(dir)) {
+            std::fprintf(stderr, "start_command: non-absolute directory parameter: %S\n", dir);
+            return 1;
+        }
+        wdir = dir;
+    }
 
-    const wchar_t *module = NULL;
-    if (wstr_to_ascii_lower(cmdline.substr(0, 4)) == L"cmd ")
+    const wchar_t* module = NULL;
+    if (wstr_case_ascii_ncmp(cmdline.c_str(), L"cmd", 3) == 0 && is_cmd_line_sep(cmdline[3]))
         module = comspec.c_str();
 
-    if (!::CreateProcessW(module, &cmdline[0], NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, NULL, NULL, &si, &out_pi)) {
+    if (!::CreateProcessW(module, &cmdline[0], NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, NULL, wdir, &si, &out_pi)) {
         Win32_perror("CreateProcess");
-        std::fprintf(stderr, "CreateProcess failed (%d) for command: %S\n", GetLastError(), command);
+        std::fprintf(stderr, "CreateProcess failed (%d) for command: %S\n", GetLastError(), cmdline.c_str());
         return 1;
     }
 
@@ -271,10 +302,25 @@ private:
 
         void run()
         {
-            std::string line = recv_line();
+            std::string line;
+            std::string run;
+            std::string cd;
+
+            while (1) {
+                line = recv_line();
+
+                if (line == "")
+                    break;
+                else if (startswith(line, "run:"))
+                    run = std::move(line);
+                else if (startswith(line, "cd:"))
+                    cd = std::move(line);
+            }
+            std::wstring wcd = !cd.empty() ? utf::widen(&cd[3]) : std::wstring();
+            std::wstring wrun = !run.empty() ? utf::widen(&run[4]) : std::wstring();
 
             PROCESS_INFORMATION pi;
-            if (start_command(utf::widen(line).c_str(), pi) != 0)
+            if (start_command(wrun, wcd.c_str(), pi) != 0)
                 return;
 
             ::CloseHandle(pi.hThread);
@@ -285,7 +331,7 @@ private:
         }
 
     private:
-        const size_t line_supported_length = 32768*3 + 16;     // indicative approx max length (the size can grew to at least that)
+        const size_t line_supported_length = 32768*3 + 16; // in bytes (UTF-8); indicative approx max length (the size can grow to at least that)
         CUniqueSocket&  m_usock;
         std::string     m_buf;
     };
@@ -355,7 +401,7 @@ static void init_locale_console_cp()
 {
     UINT cp = GetConsoleOutputCP();
     char buf[16];
-    std::snprintf(buf, 16, ".%u", cp);
+    (void)std::snprintf(buf, 16, ".%u", cp);
     buf[15] = 0;
     std::setlocale(LC_ALL, buf);
     _setmbcp((int)cp);
@@ -396,8 +442,8 @@ int main()
 
     PROCESS_INFORMATION pi;
     if (start_command(
-            (utf::widen("bash --rcfile \"" + wsl_tmp_filename + "\" ")
-              + get_cmd_line_params()).c_str(),
+            utf::widen("bash --rcfile \"" + wsl_tmp_filename + "\" ") + get_cmd_line_params(),
+            nullptr,
             pi) != 0) {
         _wremove(utf::widen(tmp_filename).c_str());
         std::exit(EXIT_FAILURE);
