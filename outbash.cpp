@@ -133,9 +133,8 @@ int wstr_case_ascii_ncmp(const wchar_t* s1, const wchar_t* s2, size_t n)
     do {
         c1 = *s1++;
         c2 = *s2++;
-        if (n == 0)
+        if (n-- == 0)
             c1 = L'\0';
-        n--;
     } while (c1 != L'\0' && to_ascii_lower(c1) == to_ascii_lower(c2));
 
     return ((uint16_t)c1 > (uint16_t)c2) ? 1
@@ -302,12 +301,11 @@ private:
 
         void run()
         {
-            std::string line;
             std::string run;
             std::string cd;
 
             while (1) {
-                line = recv_line();
+                std::string line = recv_line();
 
                 if (line == "")
                     break;
