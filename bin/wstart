@@ -1,2 +1,2 @@
 #!/bin/bash
-printf 'run:%s\n\n' "cmd /C start $*" | netcat 127.0.0.1 "$OUTBASH_PORT"
+wcmd start "$@"
