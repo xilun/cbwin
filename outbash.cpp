@@ -172,7 +172,7 @@ static int start_command(std::wstring cmdline, const wchar_t* dir, PROCESS_INFOR
     }
 
     const wchar_t* module = NULL;
-    if (wstr_case_ascii_ncmp(cmdline.c_str(), L"cmd", 3) == 0 && is_cmd_line_sep(cmdline[3]))
+    if (wstr_case_ascii_ncmp(cmdline.c_str(), L"cmd", 3) == 0 && (is_cmd_line_sep(cmdline[3]) || cmdline[3] == L'\0'))
         module = comspec.c_str();
 
     if (!::CreateProcessW(module, &cmdline[0], NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, NULL, wdir, &si, &out_pi)) {
