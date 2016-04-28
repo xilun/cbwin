@@ -1,2 +1,0 @@
-#!/bin/bash
-printf 'run:%s\n\n' "$*" | netcat 127.0.0.1 "$OUTBASH_PORT"

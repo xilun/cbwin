@@ -1,14 +1,14 @@
 # cbwin
 Callback Win32 CreateProcess from WSL (or anything doing TCP on 127.0.0.1)
 
-# instructions
+# installation
 1. Build `outbash.exe` (for example with Visual C++ 2015) and use it instead of `bash.exe`
-2. In `caller/`, build `wcmd` (with `./build.sh`)
-3. Put `caller/wcmd` and `bin/wstart` in `/usr/local/bin`
-4. In WSL sessions launched by `outbash.exe`, you can now call Windows programs with the `wcmd` and `wstart` commands.
+2. In `caller/`, build `wrun`, `wcmd`, and `wstart` (with `./build.sh`)
+3. Install the binaries in `/usr/local/bin`, for example with: `sudo cp wrun wcmd wstart /usr/local/bin`
+4. In WSL sessions launched by `outbash.exe`, you can now call Windows programs with the `wrun`, `wcmd`, and `wstart` commands.
 
 # examples
-`wcmd` launches a command with cmd, while `wstart` does likewise but also prefixes it with `start`.
+`wcmd` launches a command with `cmd`, while `wstart` does likewise but also prefixes it with `start`. `wrun` launches the command line directly with `CreateProcess`, without using `cmd`. If in doubt use `wcmd` to launch Win32 command line tools, and `wstart` to launch graphical applications.
 
     xilun@WINWIN:/mnt/c/Users$ uname -a
     Linux WINWIN 3.4.0+ #1 PREEMPT Thu Aug 1 17:06:05 CST 2013 x86_64 x86_64 x86_64 GNU/Linux
@@ -29,6 +29,6 @@ Callback Win32 CreateProcess from WSL (or anything doing TCP on 127.0.0.1)
     xilun@WINWIN:/mnt/c/Users$
 
 # warnings
-Anybody with access to TCP 127.0.0.1 can launch anything with the privileges of the user who launched `outbash.exe`. This might not be an issue if you are the only user of your computer.
+Anybody with access to TCP 127.0.0.1 can launch anything with the privileges of the user who launched `outbash.exe`. This might not be an issue if you are the only user of your computer. This might however break the WSL security model (once it is properly implemented by MS), but if you are only using separation between the WSL root and user to avoid casual mistakes and not for strong security purposes this is also not an issue.
 
 It is an unfinished work in progress. There are various stuff not-implemented (CRT compatible escaping of the command line args, propagating exit codes, allowing pipes, trying to capture/restore the environment to do builds...)
