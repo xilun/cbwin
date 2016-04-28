@@ -42,11 +42,14 @@
 #include <mbctype.h>
 
 #include "utf.h"
+#include "env.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 
 using std::size_t;
 using std::uint16_t;
+
+static EnvVars initial_env_vars(from_system);
 
 template <typename CharT>
 static bool is_ascii_letter(CharT c)
@@ -153,7 +156,10 @@ static bool path_is_really_absolute(const wchar_t* path)
     return false;
 }
 
-static int start_command(std::wstring cmdline, const wchar_t* dir, PROCESS_INFORMATION& out_pi)
+static int start_command(std::wstring cmdline,
+                         const wchar_t* dir,
+                         EnvVars* vars,
+                         PROCESS_INFORMATION& out_pi)
 {
     STARTUPINFOW si;
 
@@ -175,7 +181,14 @@ static int start_command(std::wstring cmdline, const wchar_t* dir, PROCESS_INFOR
     if (wstr_case_ascii_ncmp(cmdline.c_str(), L"cmd", 3) == 0 && (is_cmd_line_sep(cmdline[3]) || cmdline[3] == L'\0'))
         module = comspec.c_str();
 
-    if (!::CreateProcessW(module, &cmdline[0], NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, NULL, wdir, &si, &out_pi)) {
+    const wchar_t* env = nullptr;
+    std::wstring wbuf;
+    if (vars) {
+        wbuf = vars->get_environment_block();
+        env = &wbuf[0];
+    }
+
+    if (!::CreateProcessW(module, &cmdline[0], NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, (LPVOID)env, wdir, &si, &out_pi)) {
         Win32_perror("CreateProcess");
         std::fprintf(stderr, "CreateProcess failed (%d) for command: %S\n", GetLastError(), cmdline.c_str());
         return 1;
@@ -301,25 +314,31 @@ private:
 
         void run()
         {
-            std::string run;
-            std::string cd;
-
-            while (1) {
-                std::string line = recv_line();
-
-                if (line == "")
-                    break;
-                else if (startswith(line, "run:"))
-                    run = std::move(line);
-                else if (startswith(line, "cd:"))
-                    cd = std::move(line);
-            }
-            std::wstring wcd = !cd.empty() ? utf::widen(&cd[3]) : std::wstring();
-            std::wstring wrun = !run.empty() ? utf::widen(&run[4]) : std::wstring();
-
             PROCESS_INFORMATION pi;
-            if (start_command(wrun, wcd.c_str(), pi) != 0)
-                return;
+            {
+                std::string run;
+                std::string cd;
+                std::unique_ptr<EnvVars> vars(nullptr);
+                auto vars_cp = [&] {if (!vars) vars.reset(new EnvVars(initial_env_vars)); return vars.get(); };
+
+                while (1) {
+                    std::string line = recv_line();
+
+                    if (line == "")
+                        break;
+                    else if (startswith(line, "run:"))
+                        run = std::move(line);
+                    else if (startswith(line, "cd:"))
+                        cd = std::move(line);
+                    else if (startswith(line, "env:"))
+                        vars_cp()->set_from_utf8(&line[4]);
+                }
+                std::wstring wcd = !cd.empty() ? utf::widen(&cd[3]) : std::wstring();
+                std::wstring wrun = !run.empty() ? utf::widen(&run[4]) : std::wstring();
+
+                if (start_command(wrun, wcd.c_str(), vars.get(), pi) != 0)
+                    return;
+            }
 
             ::CloseHandle(pi.hThread);
             ::WaitForSingleObject(pi.hProcess, INFINITE);
@@ -441,6 +460,7 @@ int main()
     PROCESS_INFORMATION pi;
     if (start_command(
             utf::widen("bash --rcfile \"" + wsl_tmp_filename + "\" ") + get_cmd_line_params(),
+            nullptr,
             nullptr,
             pi) != 0) {
         _wremove(utf::widen(tmp_filename).c_str());

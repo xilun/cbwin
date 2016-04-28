@@ -5,6 +5,8 @@ project(cbwin)
 add_executable(outbash
                utf.h
                utf.cpp
+               env.h
+               env.cpp
                outbash.cpp)
 
 add_definitions(/D_UNICODE /DUNICODE)
