@@ -216,9 +216,27 @@ static int get_tool(const char* argv0)
     }
 }
 
+static void shift(int *pargc, char ***pargv)
+{
+    if (pargc) {
+        (*pargc)--;
+        (*pargv)++;
+    } else {
+        abort();
+    }
+}
+
+static void check_argc(int argc)
+{
+    if (argc < 1) {
+        fprintf(stderr, "%s: no command\n", tool_name);
+        terminate_nocore();
+    }
+}
+
 int main(int argc, char *argv[])
 {
-    if (argc < 2) {
+    if (argc < 1) {
         fprintf(stderr, "wcmd/wrun/wstart called without argument\n");
         terminate_nocore();
     }
@@ -234,6 +252,28 @@ int main(int argc, char *argv[])
     }
     char* cwd_win32 = convert_drive_fs_path_to_win32(cwd);
     free(cwd); cwd = NULL;
+
+    struct string outbash_command = string_create("cd:");
+    string_append(&outbash_command, cwd_win32); free(cwd_win32);
+
+    shift(&argc, &argv);
+    while (argc && !strncmp(argv[0], "--", 2)) {
+        if (!strcmp(argv[0], "--")) {
+            shift(&argc, &argv);
+            break;
+        }
+        if (!strcmp(argv[0], "--env")) {
+            shift(&argc, &argv);
+            while (argc && strncmp(argv[0], "--", 2) != 0
+                        && *argv[0] != '\0' && strchr(argv[0] + 1, '=')) {
+                string_append(&outbash_command, "\nenv:");
+                string_append(&outbash_command, argv[0]);
+                shift(&argc, &argv);
+            }
+        }
+    }
+    check_argc(argc);
+
     char *outbash_port = getenv("OUTBASH_PORT");
     if (outbash_port == NULL) {
         fprintf(stderr, "%s: OUTBASH_PORT environment variable not set\n", tool_name);
@@ -250,9 +290,6 @@ int main(int argc, char *argv[])
         terminate_nocore();
     }
 
-    struct string outbash_command = string_create("cd:");
-    string_append(&outbash_command, cwd_win32); free(cwd_win32);
-
     switch (tool) {
     case TOOL_WRUN:
         string_append(&outbash_command, "\nrun:");
@@ -266,7 +303,7 @@ int main(int argc, char *argv[])
     }
 
     bool sep = false;
-    for (int i = 1; i < argc; i++) {
+    for (int i = 0; i < argc; i++) {
         if (sep) string_append(&outbash_command, " ");
         string_append(&outbash_command, argv[i]);
         sep = true;
