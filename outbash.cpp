@@ -212,6 +212,28 @@ static int init_winsock()
     return 0;
 }
 
+typedef SSIZE_T ssize_t;
+ssize_t send_all(const SOCKET sockfd, const void *buffer, const size_t length, const int flags)
+{
+    if ((ssize_t)length < 0) {
+        WSASetLastError(WSAEINVAL);
+        return SOCKET_ERROR;
+    }
+    const char *cbuf = (const char *)buffer;
+    ssize_t rv;
+    size_t where;
+    bool first = true; // allow a single call to send() if length == 0
+    for (where = 0; first || where < length; where += rv) {
+        first = false;
+        int len = (length - where <= INT_MAX) ? (int)(length - where) : INT_MAX;
+        rv = ::send(sockfd, cbuf + where, len, flags);
+        if (rv < 0)
+            return SOCKET_ERROR;
+    }
+    assert(where == length);
+    return (ssize_t)where;
+}
+
 class CUniqueSocket {
 public:
     explicit CUniqueSocket(SOCKET conn_sock) noexcept : m_socket(conn_sock) {}
@@ -342,7 +364,16 @@ private:
 
             ::CloseHandle(pi.hThread);
             ::WaitForSingleObject(pi.hProcess, INFINITE);
+
+            DWORD exit_code;
+            if (!::GetExitCodeProcess(pi.hProcess, &exit_code)) {
+                Win32_perror("GetExitCodeProcess");
+                exit_code = (DWORD)-1;
+            }
             ::CloseHandle(pi.hProcess);
+
+            char buf_rc[16]; (void)std::snprintf(buf_rc, 16, "%u\n", (unsigned int)exit_code);
+            send_all(m_usock.get(), buf_rc, std::strlen(buf_rc), 0);
 
             m_usock.graceful_close();
         }

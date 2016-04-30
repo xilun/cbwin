@@ -234,6 +234,25 @@ static void check_argc(int argc)
     }
 }
 
+static int recv_line_before_drop(int sockfd, char *buf, size_t bufsz)
+{
+    ssize_t where, res;
+    for (where = 0; where < (ssize_t)bufsz; where += res)
+    {
+        do {
+            res = recv(sockfd, buf + where, bufsz - (size_t)where, 0);
+        } while (res < 0 && errno == EINTR);
+        if (res <= 0)
+            return -1;
+        char* nl = memchr(buf + where, '\n', res);
+        if (nl) {
+            *nl = 0;
+            return 0;
+        }
+    }
+    return -1;
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 1) {
@@ -327,6 +346,12 @@ int main(int argc, char *argv[])
     shutdown(sock, SHUT_WR);
     string_destroy(&outbash_command);
 
+    int rc = 255;
+    char buf[16];
+    if (recv_line_before_drop(sock, buf, 16) >= 0) {
+        long longrc = atol(buf);
+        rc = (longrc >= 0 && longrc <= 255) ? longrc : 255;
+    }
     ssize_t res;
     do {
         char buf[128];
@@ -337,5 +362,5 @@ int main(int argc, char *argv[])
         terminate_nocore();
     }
 
-    return 0;
+    return rc;
 }
