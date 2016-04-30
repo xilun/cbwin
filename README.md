@@ -28,7 +28,39 @@ If in doubt use `wcmd` to launch Win32 command line tools, and `wstart` to launc
                    0 fichier(s)                0 octets
                    5 Rép(s)  43 126 734 848 octets libres
     xilun@WINWIN:/mnt/c/Users$ wstart notepad
-    xilun@WINWIN:/mnt/c/Users$
+    xilun@WINWIN:/mnt/c/Users$ 
+
+Other example to launch `msbuild` to rebuild `outbash.exe`:
+
+    xilun@WINWIN:/mnt/c/Users/xilun/Documents/Projects/cbwin/vs$ wcmd '"C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" amd64 && msbuild /t:Rebuild /p:Configuration=Release /m cbwin.sln'
+    Microsoft (R) Build Engine, version 14.0.25123.0
+    Copyright (C) Microsoft Corporation. Tous droits réservés.
+    
+    La génération a démarré 30/04/2016 15:46:15.
+    
+    [...]
+    
+        La génération a réussi.
+        0 Avertissement(s)
+        0 Erreur(s)
+
+    Temps écoulé 00:00:04.61
+    xilun@WINWIN:/mnt/c/Users/xilun/Documents/Projects/cbwin/vs$ echo $?
+    0
+    xilun@WINWIN:/mnt/c/Users/xilun/Documents/Projects/cbwin/vs$ wcmd '"C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" amd64 && msbuild /t:Rebuild /p:Configuration=Release /m does_not_exist.sln'
+    Microsoft (R) Build Engine, version 14.0.25123.0
+    Copyright (C) Microsoft Corporation. Tous droits réservés.
+    
+    MSBUILD : error MSB1009: Le fichier projet n'existe pas.
+    Commutateur : does_not_exist.sln
+    xilun@WINWIN:/mnt/c/Users/xilun/Documents/Projects/cbwin/vs$ echo $?
+    1
+    xilun@WINWIN:/mnt/c/Users/xilun/Documents/Projects/cbwin/vs$ 
+
+Unfortunately Windows does not allow to replace open files, and that includes `.exe` that have been used to launch
+a process that is still running (the above session was launched from an `outbash.exe` copied out of the `Release/`
+directory, otherwise it would have failed). Win32 also has no equivalent of `exec()`, so we would not be able to
+update a running `outbash.exe` anyway.
 
 The environment block for launched processes is the one `outbash.exe` was started with, but it can be modified for
 individual commands. The `--env` option allows to set environment variables for the command. Parameters after this
