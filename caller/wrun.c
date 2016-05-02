@@ -2,18 +2,18 @@
  * Copyright(c) 2016  Guillaume Knispel <xilun0@gmail.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files(the "Software"), to deal
+ * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions :
+ * furnished to do so, subject to the following conditions:
  *
  * The above copyright notice and this permission notice shall be included in all
  * copies or substantial portions of the Software.
  *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
  * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
@@ -21,6 +21,7 @@
  */
 
 #define _XOPEN_SOURCE 700
+#define _BSD_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,6 +33,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 
@@ -253,6 +255,31 @@ static int recv_line_before_drop(int sockfd, char *buf, size_t bufsz)
     return -1;
 }
 
+static bool linux_fd_is_null_or_bad(int fd)
+{
+    struct stat buf;
+    int res = fstat(fd, &buf);
+    if (res < 0) {
+        if (errno == EBADF)
+            return true;
+        abort();
+    }
+    // under Linux, the major and minor of /dev/null is fixed:
+    if (S_ISCHR(buf.st_mode) && major(buf.st_rdev) == 1
+                             && minor(buf.st_rdev) == 3) {
+        return true;
+    }
+    return false;
+}
+
+static void ask_redirect(struct string* command, const char* field, int fd)
+{
+    if (!isatty(fd)) {
+        string_append(command, field);
+        string_append(command, linux_fd_is_null_or_bad(fd) ? "nul" : "redirect");
+    }
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 1) {
@@ -308,6 +335,10 @@ int main(int argc, char *argv[])
         fprintf(stderr, "%s: socket() failed: %s\n", tool_name, strerror(errno));
         terminate_nocore();
     }
+
+    ask_redirect(&outbash_command, "\nstdin:", STDIN_FILENO);
+    ask_redirect(&outbash_command, "\nstdout:", STDOUT_FILENO);
+    ask_redirect(&outbash_command, "\nstderr:", STDERR_FILENO);
 
     switch (tool) {
     case TOOL_WRUN:

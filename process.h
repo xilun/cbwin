@@ -22,18 +22,39 @@
 
 #pragma once
 
-#include <map>
+#include <Windows.h>
 
-struct from_system_type { };
-extern const from_system_type from_system;
+#include <vector>
+#include <memory>
+#include <array>
 
-class EnvVars
+class AttributeHandleList
 {
 public:
-    EnvVars() {}
-    EnvVars(from_system_type);
-    std::wstring get_environment_block() const;
-    void set_from_utf8(const char* s);
+    AttributeHandleList();
+    AttributeHandleList(std::vector<HANDLE> handle_list);
+    LPPROC_THREAD_ATTRIBUTE_LIST    get_attribute_list_ptr() const { return m_pAttributeList.get(); }
+private:
+    // note: order of the members matters (because of destruction order)
+    std::unique_ptr<HANDLE[]>       m_handle_store;
+    typedef std::unique_ptr<_PROC_THREAD_ATTRIBUTE_LIST, void (*)(LPPROC_THREAD_ATTRIBUTE_LIST)> unique_attribute_list_ptr;
+    unique_attribute_list_ptr       m_pAttributeList;
+};
 
-    std::map<std::wstring, std::wstring> m_env;
+class StdRedirects
+{
+public:
+    enum role_e { REDIR_STDIN, REDIR_STDOUT, REDIR_STDERR };
+public:
+    StdRedirects();
+    ~StdRedirects();
+    StdRedirects(const StdRedirects&) = delete;
+    StdRedirects& operator =(const StdRedirects&) = delete;
+    void adopt_handle(role_e role, HANDLE h);
+    void set_to_nul(role_e role);
+    AttributeHandleList attribute_handle_list() const;
+    HANDLE get_handle(role_e role);
+private:
+    std::array<HANDLE, 3>  m_handleOwned;
+    std::array<HANDLE, 3>  m_handle;
 };

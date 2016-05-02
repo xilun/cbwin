@@ -7,6 +7,8 @@ add_executable(outbash
                utf.cpp
                env.h
                env.cpp
+               process.h
+               process.cpp
                outbash.cpp)
 
 add_definitions(/D_UNICODE /DUNICODE)

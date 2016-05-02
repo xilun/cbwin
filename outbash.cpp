@@ -2,18 +2,18 @@
  * Copyright(c) 2016  Guillaume Knispel <xilun0@gmail.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files(the "Software"), to deal
+ * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions :
+ * furnished to do so, subject to the following conditions:
  *
  * The above copyright notice and this permission notice shall be included in all
  * copies or substantial portions of the Software.
  *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
  * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
@@ -43,6 +43,7 @@
 
 #include "utf.h"
 #include "env.h"
+#include "process.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -92,7 +93,7 @@ static std::wstring get_comspec()
 {
     wchar_t buf[MAX_PATH+1];
     UINT res = GetEnvironmentVariableW(L"ComSpec", buf, MAX_PATH+1);
-    if (res == 0 && GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
+    if (res == 0 && ::GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
         res = GetSystemDirectoryW(buf, MAX_PATH+1);
         if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "GetSystemDirectory error\n"); std::abort(); }
         return buf + std::wstring(L"\\cmd.exe");
@@ -105,29 +106,29 @@ static const std::wstring comspec = get_comspec();
 
 static void Win32_perror(const char* what)
 {
-    const int errnum = GetLastError();
+    const int errnum = ::GetLastError();
     const bool what_present = (what && *what);
 
     WCHAR *str;
-    DWORD nbWChars = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER
-                                    | FORMAT_MESSAGE_FROM_SYSTEM
-                                    | FORMAT_MESSAGE_IGNORE_INSERTS
-                                    | FORMAT_MESSAGE_MAX_WIDTH_MASK,
-                                    nullptr, (DWORD)errnum, 0, (LPWSTR)&str,
-                                    0, nullptr);
+    DWORD nbWChars = ::FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER
+                                      | FORMAT_MESSAGE_FROM_SYSTEM
+                                      | FORMAT_MESSAGE_IGNORE_INSERTS
+                                      | FORMAT_MESSAGE_MAX_WIDTH_MASK,
+                                      nullptr, (DWORD)errnum, 0, (LPWSTR)&str,
+                                      0, nullptr);
     if (nbWChars == 0) {
-        fprintf(stderr, "%s%swin32 error %d (FormatMessage failed)\n",
-                what_present ? what : "",
-                what_present ? ": " : "",
-                errnum);
+        std::fprintf(stderr, "%s%swin32 error %d (FormatMessage failed)\n",
+                     what_present ? what : "",
+                     what_present ? ": " : "",
+                     errnum);
     } else {
-        fprintf(stderr, "%s%s%S\n",
-                what_present ? what : "",
-                what_present ? ": " : "",
-                str);
-        LocalFree(str);
+        std::fprintf(stderr, "%s%s%S\n",
+                     what_present ? what : "",
+                     what_present ? ": " : "",
+                     str);
+        ::LocalFree(str);
     }
-    SetLastError(errnum);
+    ::SetLastError(errnum);
 }
 
 int wstr_case_ascii_ncmp(const wchar_t* s1, const wchar_t* s2, size_t n)
@@ -159,12 +160,13 @@ static bool path_is_really_absolute(const wchar_t* path)
 static int start_command(std::wstring cmdline,
                          const wchar_t* dir,
                          EnvVars* vars,
+                         StdRedirects* redirs,
                          PROCESS_INFORMATION& out_pi)
 {
-    STARTUPINFOW si;
+    STARTUPINFOEXW si;
 
     ZeroMemory(&si, sizeof(si));
-    si.cb = sizeof(si);
+    si.StartupInfo.cb = sizeof(si);
     ZeroMemory(&out_pi, sizeof(out_pi));
 
     const wchar_t* wdir = nullptr;
@@ -188,9 +190,22 @@ static int start_command(std::wstring cmdline,
         env = &wbuf[0];
     }
 
-    if (!::CreateProcessW(module, &cmdline[0], NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, (LPVOID)env, wdir, &si, &out_pi)) {
+    AttributeHandleList ahl;
+    BOOL inherit_handles = FALSE;
+    if (redirs) {
+        inherit_handles = TRUE;
+        si.StartupInfo.hStdInput = redirs->get_handle(StdRedirects::REDIR_STDIN);
+        si.StartupInfo.hStdOutput = redirs->get_handle(StdRedirects::REDIR_STDOUT);
+        si.StartupInfo.hStdError = redirs->get_handle(StdRedirects::REDIR_STDERR);
+        si.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
+        ahl = redirs->attribute_handle_list();
+        si.lpAttributeList = ahl.get_attribute_list_ptr();
+    }
+    if (!::CreateProcessW(module, &cmdline[0], NULL, NULL, inherit_handles,
+                          CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
+                          (LPVOID)env, wdir, (STARTUPINFOW*)&si, &out_pi)) {
         Win32_perror("CreateProcess");
-        std::fprintf(stderr, "CreateProcess failed (%d) for command: %S\n", GetLastError(), cmdline.c_str());
+        std::fprintf(stderr, "CreateProcess failed (%d) for command: %S\n", ::GetLastError(), cmdline.c_str());
         return 1;
     }
 
@@ -216,7 +231,7 @@ typedef SSIZE_T ssize_t;
 ssize_t send_all(const SOCKET sockfd, const void *buffer, const size_t length, const int flags)
 {
     if ((ssize_t)length < 0) {
-        WSASetLastError(WSAEINVAL);
+        ::WSASetLastError(WSAEINVAL);
         return SOCKET_ERROR;
     }
     const char *cbuf = (const char *)buffer;
@@ -341,7 +356,9 @@ private:
                 std::string run;
                 std::string cd;
                 std::unique_ptr<EnvVars> vars(nullptr);
-                auto vars_cp = [&] {if (!vars) vars.reset(new EnvVars(initial_env_vars)); return vars.get(); };
+                std::unique_ptr<StdRedirects> redir(nullptr);
+                auto vars_cp = [&] { if (!vars) vars.reset(new EnvVars(initial_env_vars)); return vars.get(); };
+                auto inst_redir = [&] { if (!redir) redir.reset(new StdRedirects); return redir.get(); };
 
                 while (1) {
                     std::string line = recv_line();
@@ -354,11 +371,17 @@ private:
                         cd = std::move(line);
                     else if (startswith(line, "env:"))
                         vars_cp()->set_from_utf8(&line[4]);
+                    else if (startswith(line, "stdin:nul"))
+                        inst_redir()->set_to_nul(StdRedirects::REDIR_STDIN);
+                    else if (startswith(line, "stdout:nul"))
+                        inst_redir()->set_to_nul(StdRedirects::REDIR_STDOUT);
+                    else if (startswith(line, "stderr:nul"))
+                        inst_redir()->set_to_nul(StdRedirects::REDIR_STDERR);
                 }
                 std::wstring wcd = !cd.empty() ? utf::widen(&cd[3]) : std::wstring();
                 std::wstring wrun = !run.empty() ? utf::widen(&run[4]) : std::wstring();
 
-                if (start_command(wrun, wcd.c_str(), vars.get(), pi) != 0)
+                if (start_command(wrun, wcd.c_str(), vars.get(), redir.get(), pi) != 0)
                     return;
             }
 
@@ -428,7 +451,7 @@ static void reap_connections(std::vector<ThreadConnection>& vTConn)
     for (auto& tc : vTConn) {
         HANDLE tHdl = (HANDLE)tc.m_thread.native_handle();
         DWORD exit_code;
-        if (GetExitCodeThread(tHdl, &exit_code) == 0) {
+        if (::GetExitCodeThread(tHdl, &exit_code) == 0) {
             Win32_perror("GetExitCodeThread");
             // what can we do? I guess leaking is not so bad in that case
             tc.m_thread.detach();
@@ -447,7 +470,7 @@ static void reap_connections(std::vector<ThreadConnection>& vTConn)
 
 static void init_locale_console_cp()
 {
-    UINT cp = GetConsoleOutputCP();
+    UINT cp = ::GetConsoleOutputCP();
     char buf[16];
     (void)std::snprintf(buf, 16, ".%u", cp);
     buf[15] = 0;
@@ -460,7 +483,7 @@ int main()
     init_locale_console_cp();
     if (init_winsock() != 0) std::exit(EXIT_FAILURE);
 
-    SOCKET sock = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    SOCKET sock = ::WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, 0);
     if (sock == INVALID_SOCKET) { Win32_perror("socket"); std::exit(EXIT_FAILURE); }
 
     struct sockaddr_in serv_addr;
@@ -491,8 +514,7 @@ int main()
     PROCESS_INFORMATION pi;
     if (start_command(
             utf::widen("bash --rcfile \"" + wsl_tmp_filename + "\" ") + get_cmd_line_params(),
-            nullptr,
-            nullptr,
+            nullptr, nullptr, nullptr,
             pi) != 0) {
         _wremove(utf::widen(tmp_filename).c_str());
         std::exit(EXIT_FAILURE);
@@ -523,7 +545,7 @@ int main()
                 int conn_addr_len = (int)sizeof(conn_addr);
                 SOCKET conn = ::accept(sock, (struct sockaddr*)&conn_addr, &conn_addr_len);
                 if (conn == INVALID_SOCKET) {
-                    switch (WSAGetLastError()) {
+                    switch (::WSAGetLastError()) {
                     case WSAECONNRESET:
                     case WSAEINPROGRESS:
                     case WSAEWOULDBLOCK:
