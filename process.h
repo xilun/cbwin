@@ -28,6 +28,8 @@
 #include <memory>
 #include <array>
 
+[[noreturn]] void throw_last_error(const char* what);
+
 class AttributeHandleList
 {
 public:
@@ -52,8 +54,9 @@ public:
     StdRedirects& operator =(const StdRedirects&) = delete;
     void adopt_handle(role_e role, HANDLE h);
     void set_to_nul(role_e role);
+    void set_same_as_other(role_e role, role_e other);
     AttributeHandleList attribute_handle_list() const;
-    HANDLE get_handle(role_e role);
+    HANDLE get_handle(role_e role) const;
 private:
     std::array<HANDLE, 3>  m_handleOwned;
     std::array<HANDLE, 3>  m_handle;

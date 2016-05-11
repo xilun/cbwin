@@ -27,7 +27,7 @@
 
 #include "process.h"
 
-static void throw_last_error(const char* what)
+void throw_last_error(const char* what)
 {
     throw std::system_error(std::error_code(::GetLastError(), std::system_category()), what);
 }
@@ -140,7 +140,12 @@ void StdRedirects::set_to_nul(role_e role)
     m_handle.at(role) = (role == REDIR_STDIN) ? inheritable_nul_input : inheritable_nul_output;
 }
 
-HANDLE StdRedirects::get_handle(role_e role)
+void StdRedirects::set_same_as_other(role_e role, role_e other)
+{
+    m_handle.at(role) = m_handle.at(other);
+}
+
+HANDLE StdRedirects::get_handle(role_e role) const
 {
     return m_handle.at(role);
 }

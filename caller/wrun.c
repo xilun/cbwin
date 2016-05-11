@@ -32,6 +32,8 @@
 #include <assert.h>
 #include <signal.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/select.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -272,12 +274,268 @@ static bool linux_fd_is_null_or_bad(int fd)
     return false;
 }
 
-static void ask_redirect(struct string* command, const char* field, int fd)
+// precondition: fd must not be bad
+/*static bool fd_is_reg(int fd)
+{
+    struct stat buf;
+    int res = fstat(fd, &buf);
+    if (res < 0) {
+        fprintf(stderr, "%s: fstat(%d) failed: %s\n", tool_name, fd, strerror(errno));
+        abort();
+    }
+    return S_ISREG(buf.st_mode);
+}*/
+
+static void fd_set_nonblock(int fd)
+{
+    int flags = fcntl(fd, F_GETFL);
+    if (flags < 0) {
+        fprintf(stderr, "%s: fcntl(%d, F_GETFL) failed: %s\n", tool_name, fd, strerror(errno));
+        abort();
+    }
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        fprintf(stderr, "%s: fcntl(%d, F_SETFL, flags | O_NONBLOCK) failed: %s\n", tool_name, fd, strerror(errno));
+        abort();
+    }
+}
+
+static void ask_redirect(struct string* command, const char* field, int fd, int port)
 {
     if (!isatty(fd)) {
         string_append(command, field);
-        string_append(command, linux_fd_is_null_or_bad(fd) ? "nul" : "redirect");
+        if (linux_fd_is_null_or_bad(fd)) {
+            string_append(command, "nul");
+        } else {
+            char buf[32];
+            (void)snprintf(buf, 32, "redirect=%d", port);
+            string_append(command, buf);
+        }
     }
+}
+
+static bool needs_socket_redirect(int fd)
+{
+    return !isatty(fd) && !linux_fd_is_null_or_bad(fd);
+}
+
+struct listening_socket {
+    int sockfd;
+    int port;
+};
+
+#define NO_LISTENING_SOCKET {-1, 0}
+
+struct listening_socket socket_listen_one_loopback()
+{
+    struct listening_socket lsock = NO_LISTENING_SOCKET;
+    lsock.sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (lsock.sockfd < 0) {
+        fprintf(stderr, "%s: socket() failed: %s\n", tool_name, strerror(errno));
+        terminate_nocore();
+    }
+
+    struct sockaddr_in serv_addr;
+    memset(&serv_addr, 0, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    serv_addr.sin_port = 0;
+    if (bind(lsock.sockfd, (const struct sockaddr *)&serv_addr, sizeof(serv_addr)) != 0) {
+        fprintf(stderr, "%s: bind() failed: %s\n", tool_name, strerror(errno));
+        terminate_nocore();
+    }
+    socklen_t namelen = sizeof(serv_addr);
+    if (getsockname(lsock.sockfd, (struct sockaddr *)&serv_addr, &namelen) != 0) {
+        fprintf(stderr, "%s: getsockname() failed: %s\n", tool_name, strerror(errno));
+        terminate_nocore();
+    }
+
+    lsock.port = ntohs(serv_addr.sin_port);
+
+    if (listen(lsock.sockfd, 1) != 0) {
+        fprintf(stderr, "%s: listen() failed: %s\n", tool_name, strerror(errno));
+        terminate_nocore();
+    }
+
+    return lsock;
+}
+
+int accept_and_close_listener(struct listening_socket *lsock)
+{
+    struct sockaddr_in client_addr;
+    memset(&client_addr, 0, sizeof(client_addr));
+    int sock;
+    do {
+        socklen_t len = sizeof(client_addr);
+        sock = accept(lsock->sockfd, (struct sockaddr *)&client_addr, &len);
+    } while (sock < 0 && errno == EINTR);
+    if (sock < 0) {
+        fprintf(stderr, "%s: accept() failed: %s\n", tool_name, strerror(errno));
+        terminate_nocore();
+    }
+    // hopefully, like under Linux, WSL closes reliably:
+    close(lsock->sockfd);
+    lsock->sockfd = -1;
+
+    fd_set_nonblock(sock);
+    return sock;
+}
+
+static int get_return_code(int sock_ctrl)
+{
+    int rc = 255;
+    char buf[16];
+    if (recv_line_before_drop(sock_ctrl, buf, 16) >= 0) {
+        long longrc = atol(buf);
+        rc = (longrc >= 0 && longrc <= 255) ? longrc : 255;
+    }
+    ssize_t res;
+    do {
+        char buf[128];
+        res = recv(sock_ctrl, buf, 128, 0);
+    } while (res > 0 || (res < 0 && errno == EINTR));
+    if (res != 0) {
+        fprintf(stderr, "%s: recv() failed: %s\n", tool_name, strerror(errno));
+        terminate_nocore();
+    }
+    return rc;
+}
+
+#define FORWARD_BUFFER_SIZE 16384
+struct forward_buffer
+{
+    int fill;
+    char buffer[FORWARD_BUFFER_SIZE];
+};
+
+struct forward_state
+{
+    int fd_in;
+    int fd_out;
+    bool ready_in;
+    bool ready_out;
+    bool dead_in;
+    bool dead_out;
+    struct forward_buffer buf;
+};
+
+static void forward_state_init(struct forward_state *fs, int fd_in, int fd_out)
+{
+    fs->fd_in = fd_in;
+    fs->fd_out = fd_out;
+    fs->ready_in = false;
+    fs->ready_out = false;
+    fs->dead_in = false;
+    fs->dead_out = false;
+    fs->buf.fill = 0;
+    // no need to init fs->buf.buffer
+}
+
+static void forward_state_down(struct forward_state *fs)
+{
+    fs->fd_in = -1;
+    fs->fd_out = -1;
+    fs->ready_in = false;
+    fs->ready_out = false;
+    fs->dead_in = true;
+    fs->dead_out = true;
+    fs->buf.fill = 0;
+}
+
+// If std fd are redirected to network sockets, we might not want to abort
+// on some connection/network errors. The following list has been pulled
+// out of thin air, but seems reasonable.
+static const int potential_connection_errors[] = {
+    EPIPE,
+    ECONNRESET,
+    ETIMEDOUT,
+    EHOSTUNREACH,
+    ENETDOWN,
+    ENETRESET,
+    ENETUNREACH,
+    ENONET,
+    EPROTO
+};
+
+#define ARRAY_SIZE(arr)     ((sizeof(arr)) / (sizeof(arr[0])))
+
+static bool err_is_connection_broken(int error)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(potential_connection_errors); i++) {
+        if (error == potential_connection_errors[i])
+            return true;
+    }
+    return false;
+}
+
+static void forward_close_in(struct forward_state *fs)
+{
+    fs->ready_in = false;
+    fs->dead_in = true;
+    close(fs->fd_in);
+    fs->fd_in = -1;
+}
+
+static void forward_close_out(struct forward_state *fs)
+{
+    fs->ready_out = false;
+    fs->dead_out = true;
+    close(fs->fd_out);
+    fs->fd_out = -1;
+}
+
+static bool forwardable_stream(struct forward_state *fs)
+{
+    return (fs->ready_in || fs->buf.fill > 0) && fs->ready_out;
+}
+
+static void forward_stream(struct forward_state *fs, const char *stream_name)
+{
+    if (fs->ready_in && fs->buf.fill < FORWARD_BUFFER_SIZE) {
+        ssize_t res;
+        do {
+            res = read(fs->fd_in, fs->buf.buffer + fs->buf.fill,
+                                  FORWARD_BUFFER_SIZE - fs->buf.fill);
+        } while (res < 0 && errno == EINTR);
+        if (res < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                fs->ready_in = false;
+            } else if (err_is_connection_broken(errno)) {
+                forward_close_in(fs);
+            } else {
+                fprintf(stderr, "%s: %s: read() error: %s\n", tool_name, stream_name, strerror(errno));
+                abort();
+            }
+        } else if (res == 0) {
+            forward_close_in(fs);
+        } else { // res > 0
+            fs->buf.fill += res;
+        }
+    }
+
+    if (fs->ready_out && fs->buf.fill > 0) {
+        ssize_t res;
+        do {
+            res = write(fs->fd_out, fs->buf.buffer, fs->buf.fill);
+        } while (res < 0 && errno == EINTR);
+        if (res < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                fs->ready_out = false;
+            } else if (err_is_connection_broken(errno)) {
+                forward_close_out(fs);
+            } else {
+                fprintf(stderr, "%s: %s: write() error: %s\n", tool_name, stream_name, strerror(errno));
+                abort();
+            }
+        } else {
+            fs->buf.fill -= res;
+            memmove(fs->buf.buffer, fs->buf.buffer + res, fs->buf.fill);
+        }
+    }
+
+    if (fs->dead_in && fs->buf.fill <= 0 && !fs->dead_out)
+        forward_close_out(fs);
+    if (fs->dead_out && !fs->dead_in)
+        forward_close_in(fs);
 }
 
 int main(int argc, char *argv[])
@@ -330,15 +588,25 @@ int main(int argc, char *argv[])
         fprintf(stderr, "%s: OUTBASH_PORT environment variable does not contain a valid port number\n", tool_name);
         terminate_nocore();
     }
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
+    int sock_ctrl = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock_ctrl < 0) {
         fprintf(stderr, "%s: socket() failed: %s\n", tool_name, strerror(errno));
         terminate_nocore();
     }
 
-    ask_redirect(&outbash_command, "\nstdin:", STDIN_FILENO);
-    ask_redirect(&outbash_command, "\nstdout:", STDOUT_FILENO);
-    ask_redirect(&outbash_command, "\nstderr:", STDERR_FILENO);
+#define STDIN_NEEDS_SOCKET_REDIRECT     1
+#define STDOUT_NEEDS_SOCKET_REDIRECT    2
+#define STDERR_NEEDS_SOCKET_REDIRECT    4
+    int redirects =   (needs_socket_redirect(STDIN_FILENO)  ? STDIN_NEEDS_SOCKET_REDIRECT  : 0)
+                    | (needs_socket_redirect(STDOUT_FILENO) ? STDOUT_NEEDS_SOCKET_REDIRECT : 0);
+//                  | (needs_socket_redirect(STDERR_FILENO) ? STDERR_NEEDS_SOCKET_REDIRECT : 0);
+    struct listening_socket lsock_in = NO_LISTENING_SOCKET;
+    struct listening_socket lsock_out = NO_LISTENING_SOCKET;
+    if (redirects & STDIN_NEEDS_SOCKET_REDIRECT) lsock_in = socket_listen_one_loopback();
+    if (redirects & STDOUT_NEEDS_SOCKET_REDIRECT) lsock_out = socket_listen_one_loopback();
+    ask_redirect(&outbash_command, "\nstdin:", STDIN_FILENO, lsock_in.port);
+    ask_redirect(&outbash_command, "\nstdout:", STDOUT_FILENO, lsock_out.port);
+    //ask_redirect(&outbash_command, "\nstderr:", STDERR_FILENO);
 
     switch (tool) {
     case TOOL_WRUN:
@@ -359,39 +627,83 @@ int main(int argc, char *argv[])
         sep = true;
     }
     string_append(&outbash_command, "\n\n");
+    //printf("%s", outbash_command.str);
+    //return EXIT_FAILURE;
 
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     serv_addr.sin_port = htons(port);
-    if (connect(sock, (const struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+    if (connect(sock_ctrl, (const struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
         fprintf(stderr, "%s: connect() failed: %s\n", tool_name, strerror(errno));
         terminate_nocore();
     }
 
-    if (send_all(sock, outbash_command.str, outbash_command.length, 0) < 0) {
+    if (send_all(sock_ctrl, outbash_command.str, outbash_command.length, 0) < 0) {
         fprintf(stderr, "%s: send_all() failed: %s\n", tool_name, strerror(errno));
         terminate_nocore();
     }
-    shutdown(sock, SHUT_WR);
+    shutdown(sock_ctrl, SHUT_WR);
     string_destroy(&outbash_command);
 
-    int rc = 255;
-    char buf[16];
-    if (recv_line_before_drop(sock, buf, 16) >= 0) {
-        long longrc = atol(buf);
-        rc = (longrc >= 0 && longrc <= 255) ? longrc : 255;
-    }
-    ssize_t res;
-    do {
-        char buf[128];
-        res = recv(sock, buf, 128, 0);
-    } while (res > 0 || (res < 0 && errno == EINTR));
-    if (res != 0) {
-        fprintf(stderr, "%s: recv() failed: %s\n", tool_name, strerror(errno));
-        terminate_nocore();
+    if (redirects) {
+        static struct forward_state fs[2];
+        signal(SIGPIPE, SIG_IGN);
+        if ((redirects & STDIN_NEEDS_SOCKET_REDIRECT) /* && !fd_is_reg(STDIN_FILENO) */ ) {
+            fd_set_nonblock(STDIN_FILENO);
+            int sock_in = accept_and_close_listener(&lsock_in);
+            forward_state_init(&fs[STDIN_FILENO], STDIN_FILENO, sock_in);
+        } else
+            forward_state_down(&fs[STDIN_FILENO]);
+        if ((redirects & STDOUT_NEEDS_SOCKET_REDIRECT) /* && !fd_is_reg(STDOUT_FILENO) */ ) {
+            fd_set_nonblock(STDOUT_FILENO);
+            int sock_out = accept_and_close_listener(&lsock_out);
+            forward_state_init(&fs[STDOUT_FILENO], sock_out, STDOUT_FILENO);
+        } else
+            forward_state_down(&fs[STDOUT_FILENO]);
+        // if ((redirects & STDERR_NEEDS_SOCKET_REDIRECT) /* && !fd_is_reg(STDERR_FILENO) */ )
+        //     fd_set_nonblock(STDERR_FILENO); ...
+
+#define MY_MAX(x, y) (((x) > (y)) ? (x) : (y))
+        int nfds = 0;
+        for (int i = 0; i < 2; i++) {
+            nfds = MY_MAX(nfds, fs[i].fd_in);
+            nfds = MY_MAX(nfds, fs[i].fd_out);
+        }
+        nfds++;
+
+        while (1) {
+            fd_set rfds;
+            fd_set wfds;
+            FD_ZERO(&rfds);
+            FD_ZERO(&wfds);
+            int nblive = 0, nbpull = 0;
+            for (int i = 0; i < 2; i++) {
+                nblive += (fs[i].fd_in >= 0) + (fs[i].fd_out >= 0);
+                if (fs[i].fd_in  >= 0 && !fs[i].ready_in)  { nbpull++; FD_SET(fs[i].fd_in,  &rfds); }
+                if (fs[i].fd_out >= 0 && !fs[i].ready_out) { nbpull++; FD_SET(fs[i].fd_out, &wfds); }
+            }
+            if (!nblive)
+                break;
+            if (nbpull) {
+                int res;
+                do {
+                    struct timeval immediate = { 0, 0 };
+                    bool fwdable = forwardable_stream(&fs[0]) || forwardable_stream(&fs[1]);
+                    res = select(nfds, &rfds, &wfds, NULL, fwdable ? &immediate : NULL);
+                } while(res < 0 && errno == EINTR);
+                if (res < 0)
+                    abort();
+                for (int i = 0; i < 2; i++) {
+                    if (fs[i].fd_in  >= 0 && FD_ISSET(fs[i].fd_in,  &rfds)) fs[i].ready_in  = true;
+                    if (fs[i].fd_out >= 0 && FD_ISSET(fs[i].fd_out, &wfds)) fs[i].ready_out = true;
+                }
+            }
+            forward_stream(&fs[0], "stdin");
+            forward_stream(&fs[1], "stdout");
+        }
     }
 
-    return rc;
+    return get_return_code(sock_ctrl);
 }

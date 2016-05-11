@@ -92,9 +92,9 @@ static const wchar_t* get_cmd_line_params()
 static std::wstring get_comspec()
 {
     wchar_t buf[MAX_PATH+1];
-    UINT res = GetEnvironmentVariableW(L"ComSpec", buf, MAX_PATH+1);
+    UINT res = ::GetEnvironmentVariableW(L"ComSpec", buf, MAX_PATH+1);
     if (res == 0 && ::GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
-        res = GetSystemDirectoryW(buf, MAX_PATH+1);
+        res = ::GetSystemDirectoryW(buf, MAX_PATH+1);
         if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "GetSystemDirectory error\n"); std::abort(); }
         return buf + std::wstring(L"\\cmd.exe");
     } else {
@@ -249,27 +249,99 @@ ssize_t send_all(const SOCKET sockfd, const void *buffer, const size_t length, c
     return (ssize_t)where;
 }
 
-class CUniqueSocket {
+class CUniqueEvent
+{
 public:
-    explicit CUniqueSocket(SOCKET conn_sock) noexcept : m_socket(conn_sock) {}
+    CUniqueEvent() noexcept : m_event(NULL) {}
+    explicit CUniqueEvent(HANDLE event) noexcept : m_event(event) {}
+    CUniqueEvent(const CUniqueEvent&) = delete;
+    CUniqueEvent& operator=(const CUniqueEvent&) = delete;
+    CUniqueEvent(CUniqueEvent&& other) noexcept : m_event(other.m_event) { other.m_event = NULL; }
+    CUniqueEvent& operator=(CUniqueEvent&& other) noexcept
+    {
+        if (this != &other) {
+            if (is_valid()) ::CloseHandle(m_event);
+            m_event = other.m_event;
+            other.m_event = NULL;
+        }
+        return *this;
+    }
+    ~CUniqueEvent() noexcept { if (is_valid()) ::CloseHandle(m_event); }
+    void close() noexcept
+    {
+        if (is_valid()) {
+            ::CloseHandle(m_event);
+            m_event = NULL;
+        }
+    }
+    HANDLE get_checked() const
+    {
+        if (!is_valid()) {
+            ::SetLastError(ERROR_INVALID_HANDLE);
+            throw_last_error("CUniqueEvent::get_checked");
+        }
+        return m_event;
+    }
+    HANDLE get_unchecked() const noexcept { return m_event; }
+    bool is_valid() const noexcept
+    {
+        return m_event != NULL && m_event != INVALID_HANDLE_VALUE;
+    }
+private:
+    HANDLE m_event;
+};
+
+class CUniqueSocket
+{
+public:
+    explicit CUniqueSocket(SOCKET sock) noexcept : m_socket(sock) {} // adopt existing socket
+    CUniqueSocket(int af, int type, int protocol) // create new non-overlapping socket
+    {
+        m_socket = ::WSASocket(af, type, protocol, NULL, 0, 0);
+        if (m_socket == INVALID_SOCKET)
+            throw_last_error("WSASocket");
+    }
     CUniqueSocket(const CUniqueSocket&) = delete;
     CUniqueSocket& operator =(const CUniqueSocket&) = delete;
     CUniqueSocket(CUniqueSocket&& other) noexcept : m_socket(other.m_socket) { other.m_socket = INVALID_SOCKET; }
     CUniqueSocket& operator =(CUniqueSocket&& other) noexcept
     {
-        if (&other != this)
-        {
-            abrupt_close();
+        if (&other != this) {
+            close();
             m_socket = other.m_socket;
             other.m_socket = INVALID_SOCKET;
         }
         return *this;
     }
-    ~CUniqueSocket() noexcept { abrupt_close(); }
+    ~CUniqueSocket() noexcept { close(); }
 
     SOCKET get() const noexcept { return m_socket; }
 
-    void abrupt_close() noexcept
+    SOCKET release() noexcept { SOCKET ret = m_socket; m_socket = INVALID_SOCKET; return ret; }
+
+    CUniqueEvent create_auto_event(long net_evts)
+    {
+        HANDLE ev = ::CreateEvent(NULL, FALSE, FALSE, NULL);
+        if (ev == NULL) throw_last_error("CreateEvent");
+        if (SOCKET_ERROR == ::WSAEventSelect(m_socket, ev, net_evts)) throw_last_error("WSAEventSelect");
+        return CUniqueEvent(ev);
+    }
+
+    static void set_to_blocking(SOCKET s)
+    {
+        if (s != INVALID_SOCKET) {
+            ::WSAEventSelect(s, NULL, 0);
+            unsigned long nonblocking = 0;
+            if (::ioctlsocket(s, FIONBIO, &nonblocking) != 0) throw_last_error("set socket to blocking");
+        }
+    }
+
+    void set_to_blocking()
+    {
+        set_to_blocking(m_socket);
+    }
+
+    void close() noexcept
     {
         if (m_socket != INVALID_SOCKET) {
             ::closesocket(m_socket);
@@ -277,7 +349,7 @@ public:
         }
     }
 
-    void graceful_close() noexcept
+    void shutdown_close() noexcept
     {
         if (m_socket != INVALID_SOCKET) {
             ::shutdown(m_socket, SD_BOTH);
@@ -290,7 +362,102 @@ private:
     SOCKET    m_socket;
 };
 
-class CConnection {
+class OutbashStdRedirects : public StdRedirects
+{
+public:
+    enum { STDH_INHERIT = 0, STDH_NULL = -1 }; // positive number: TCP port on loopback to redirect to
+    OutbashStdRedirects() : StdRedirects(), m_redirects(), m_redir_connect_events(), m_same_out_err_socket(false) {}
+    void parse_redir_param(role_e role, const char* param)
+    {
+        if (!std::strcmp(param, "nul")) {
+            m_redirects.at(role) = STDH_NULL;
+        } else if (!std::strncmp(param, "redirect=", std::strlen("redirect="))) {
+            param += std::strlen("redirect=");
+            long port = std::atol(param);
+            if (port < 1 || port > 65535)
+                throw std::runtime_error("redirect wanted to invalid port");
+            m_redirects.at(role) = (int)port;
+        } else {
+            throw std::runtime_error("unrecognized redirect wanted");
+        }
+    }
+    void initiate_connections()
+    {
+        if (m_redirects[REDIR_STDIN] > 0
+            && (   m_redirects[REDIR_STDIN] == m_redirects[REDIR_STDOUT]
+                || m_redirects[REDIR_STDIN] == m_redirects[REDIR_STDERR]))
+            throw std::runtime_error("same redirection wanted for stdin and stdout or stderr, this is not allowed");
+        m_same_out_err_socket = (m_redirects[REDIR_STDOUT] > 0)
+                                && (m_redirects[REDIR_STDOUT] == m_redirects[REDIR_STDERR]);
+        for (int i = REDIR_STDIN; i <= REDIR_STDERR; i++) {
+            if (m_redirects[i] < 0) {
+                set_to_nul((role_e)i);
+            } else if (m_redirects[i] > 0) {
+                if (i == REDIR_STDERR && m_same_out_err_socket) {
+                    set_same_as_other(REDIR_STDERR, REDIR_STDOUT);
+                } else {
+                    CUniqueSocket sock(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                    CUniqueEvent conn_ev = sock.create_auto_event(FD_CONNECT);
+                    struct sockaddr_in redir_addr;
+                    std::memset(&redir_addr, 0, sizeof(redir_addr));
+                    redir_addr.sin_family = AF_INET;
+                    redir_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+                    redir_addr.sin_port = htons((unsigned short)m_redirects[i]);
+                    int res = ::connect(sock.get(), (const struct sockaddr *)&redir_addr, sizeof(redir_addr));
+                    if (res == SOCKET_ERROR && ::GetLastError() != WSAEWOULDBLOCK) throw_last_error("connect");
+                    else if (res == SOCKET_ERROR) { // ::GetLastError() == WSAEWOULDBLOCK
+                        adopt_handle((role_e)i, (HANDLE)sock.release());
+                        m_redir_connect_events.at(i) = std::move(conn_ev);
+                    } else {
+                        conn_ev.close();
+                        ::shutdown(sock.get(), i == REDIR_STDIN ? SD_SEND : SD_RECEIVE);
+                        sock.set_to_blocking();
+                        adopt_handle((role_e)i, (HANDLE)sock.release());
+                    }
+                }
+            }
+        }
+    }
+    void complete_connections()
+    {
+        std::array<HANDLE, 4> wait_handles{};
+        while (1)
+        {
+            unsigned int nb = 0;
+            for (const auto& ev: m_redir_connect_events) {
+                if (ev.is_valid()) {
+                    wait_handles.at(nb) = ev.get_unchecked();
+                    nb++;
+                }
+            }
+            if (!nb)
+                break;
+            DWORD wr = ::WaitForMultipleObjects(nb, &wait_handles[0], FALSE, INFINITE);
+            if (wr == WAIT_FAILED) throw_last_error("WaitForMultipleObjects");
+            unsigned i = idx_from_evhandle(wait_handles.at(wr - WAIT_OBJECT_0));
+            m_redir_connect_events.at(i).close();
+            SOCKET s_i = (SOCKET)get_handle((role_e)i);
+            ::shutdown(s_i, i == REDIR_STDIN ? SD_SEND : SD_RECEIVE);
+            CUniqueSocket::set_to_blocking(s_i);
+        }
+    }
+private:
+    unsigned int idx_from_evhandle(HANDLE ev)
+    {
+        for (unsigned int i = 0; i < m_redir_connect_events.size(); i++) {
+            if (m_redir_connect_events[i].get_unchecked() == ev)
+                return i;
+        }
+        throw std::logic_error("event handle not found");
+    }
+private:
+    std::array<int, 3>              m_redirects;
+    std::array<CUniqueEvent, 3>     m_redir_connect_events;
+    bool                            m_same_out_err_socket;
+};
+
+class CConnection
+{
 public:
     explicit CConnection(CUniqueSocket&& usock) noexcept : m_usock(std::move(usock)) {}
 
@@ -302,11 +469,12 @@ public:
         } catch (const std::exception& e) {
             std::fprintf(stderr, "CConnection::run() exception: %s\n", e.what());
         }
-        m_usock.abrupt_close();
+        m_usock.close();
     }
 
 private:
-    class CActiveConnection {
+    class CActiveConnection
+    {
     public:
         explicit CActiveConnection(CUniqueSocket& usock) noexcept : m_usock(usock), m_buf() {}
 
@@ -356,9 +524,9 @@ private:
                 std::string run;
                 std::string cd;
                 std::unique_ptr<EnvVars> vars(nullptr);
-                std::unique_ptr<StdRedirects> redir(nullptr);
+                std::unique_ptr<OutbashStdRedirects> redir(nullptr);
                 auto vars_cp = [&] { if (!vars) vars.reset(new EnvVars(initial_env_vars)); return vars.get(); };
-                auto inst_redir = [&] { if (!redir) redir.reset(new StdRedirects); return redir.get(); };
+                auto inst_redir = [&] { if (!redir) redir.reset(new OutbashStdRedirects); return redir.get(); };
 
                 while (1) {
                     std::string line = recv_line();
@@ -371,15 +539,20 @@ private:
                         cd = std::move(line);
                     else if (startswith(line, "env:"))
                         vars_cp()->set_from_utf8(&line[4]);
-                    else if (startswith(line, "stdin:nul"))
-                        inst_redir()->set_to_nul(StdRedirects::REDIR_STDIN);
-                    else if (startswith(line, "stdout:nul"))
-                        inst_redir()->set_to_nul(StdRedirects::REDIR_STDOUT);
-                    else if (startswith(line, "stderr:nul"))
-                        inst_redir()->set_to_nul(StdRedirects::REDIR_STDERR);
+                    else if (startswith(line, "stdin:"))
+                        inst_redir()->parse_redir_param(StdRedirects::REDIR_STDIN, &line[6]);
+                    else if (startswith(line, "stdout:"))
+                        inst_redir()->parse_redir_param(StdRedirects::REDIR_STDOUT, &line[7]);
+                    else if (startswith(line, "stderr:"))
+                        inst_redir()->parse_redir_param(StdRedirects::REDIR_STDERR, &line[7]);
                 }
                 std::wstring wcd = !cd.empty() ? utf::widen(&cd[3]) : std::wstring();
                 std::wstring wrun = !run.empty() ? utf::widen(&run[4]) : std::wstring();
+
+                if (redir.get()) {
+                    redir.get()->initiate_connections();
+                    redir.get()->complete_connections();
+                }
 
                 if (start_command(wrun, wcd.c_str(), vars.get(), redir.get(), pi) != 0)
                     return;
@@ -398,7 +571,7 @@ private:
             char buf_rc[16]; (void)std::snprintf(buf_rc, 16, "%u\n", (unsigned int)exit_code);
             send_all(m_usock.get(), buf_rc, std::strlen(buf_rc), 0);
 
-            m_usock.graceful_close();
+            m_usock.shutdown_close();
         }
 
     private:
@@ -416,7 +589,7 @@ static std::string get_temp_filename(DWORD unique)
 {
     #define TMP_BUFLEN (MAX_PATH+2)
     wchar_t w_temp_path[TMP_BUFLEN];
-    DWORD res = GetTempPathW(TMP_BUFLEN, w_temp_path);
+    DWORD res = ::GetTempPathW(TMP_BUFLEN, w_temp_path);
     if (res == 0) { Win32_perror("GetTempPath"); std::exit(EXIT_FAILURE); }
     return utf::narrow(w_temp_path) + "outbash." + std::to_string((unsigned int)unique);
 }
@@ -483,23 +656,20 @@ int main()
     init_locale_console_cp();
     if (init_winsock() != 0) std::exit(EXIT_FAILURE);
 
-    SOCKET sock = ::WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, 0);
-    if (sock == INVALID_SOCKET) { Win32_perror("socket"); std::exit(EXIT_FAILURE); }
+    CUniqueSocket sock(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
     struct sockaddr_in serv_addr;
     std::memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     serv_addr.sin_port = 0;
-    if (::bind(sock, (const sockaddr *)&serv_addr, sizeof(serv_addr)) != 0) { Win32_perror("bind"); std::exit(EXIT_FAILURE); }
+    if (::bind(sock.get(), (const sockaddr *)&serv_addr, sizeof(serv_addr)) != 0) { Win32_perror("bind"); std::exit(EXIT_FAILURE); }
     int namelen = sizeof(serv_addr);
-    if (::getsockname(sock, (sockaddr *)&serv_addr, &namelen) != 0) { Win32_perror("getsockname"); std::exit(EXIT_FAILURE); }
+    if (::getsockname(sock.get(), (sockaddr *)&serv_addr, &namelen) != 0) { Win32_perror("getsockname"); std::exit(EXIT_FAILURE); }
 
-    if (::listen(sock, SOMAXCONN_HINT(600)) != 0) { Win32_perror("listen"); std::exit(EXIT_FAILURE); }
+    if (::listen(sock.get(), SOMAXCONN_HINT(600)) != 0) { Win32_perror("listen"); std::exit(EXIT_FAILURE); }
 
-    WSAEVENT accept_event = ::CreateEvent(NULL, FALSE, FALSE, NULL);
-    if (accept_event == NULL) { Win32_perror("CreateEvent"); std::exit(EXIT_FAILURE); }
-    ::WSAEventSelect(sock, accept_event, FD_ACCEPT);
+    CUniqueEvent accept_event = sock.create_auto_event(FD_ACCEPT);
 
     std::string tmp_filename = get_temp_filename(GetCurrentProcessId());
     std::string wsl_tmp_filename = convert_to_wsl_filename(tmp_filename);
@@ -523,11 +693,10 @@ int main()
 
     std::vector<ThreadConnection> vTConn;
 
-    bool network_ok = true;
     while (1) {
-        HANDLE wait_handles[2] = { pi.hProcess, accept_event };
+        HANDLE wait_handles[2] = { pi.hProcess, accept_event.get_unchecked() };
         DWORD timeout = vTConn.empty() ? INFINITE : 5000;
-        DWORD wr = ::WaitForMultipleObjects(network_ok ? 2 : 1, wait_handles, FALSE, timeout);
+        DWORD wr = ::WaitForMultipleObjects(accept_event.is_valid() ? 2 : 1, wait_handles, FALSE, timeout);
         if (wr == WAIT_FAILED) {
             Win32_perror("WaitForMultipleObjects");
             std::quick_exit(EXIT_FAILURE);
@@ -543,7 +712,7 @@ int main()
             {
                 struct sockaddr_in conn_addr;
                 int conn_addr_len = (int)sizeof(conn_addr);
-                SOCKET conn = ::accept(sock, (struct sockaddr*)&conn_addr, &conn_addr_len);
+                SOCKET conn = ::accept(sock.get(), (struct sockaddr*)&conn_addr, &conn_addr_len);
                 if (conn == INVALID_SOCKET) {
                     switch (::WSAGetLastError()) {
                     case WSAECONNRESET:
@@ -559,11 +728,8 @@ int main()
                     case WSAENETDOWN:
                         // this is really bad, but we will try to continue to wait for bash to terminate
                         Win32_perror("accept");
-                        network_ok = false;
-                        ::closesocket(sock);
-                        sock = INVALID_SOCKET;
-                        ::CloseHandle(accept_event);
-                        accept_event = INVALID_HANDLE_VALUE;
+                        accept_event.close();
+                        sock.close();
                         break;
                     default:
                         Win32_perror("accept");
@@ -571,20 +737,14 @@ int main()
                     }
                 } else {
                     CUniqueSocket usock(conn);
-                    // Winsock is designed by monkeys:
-                    ::WSAEventSelect(usock.get(), NULL, 0);
-                    unsigned long nonblocking = 0;
-                    if (::ioctlsocket(usock.get(), FIONBIO, &nonblocking) != 0) {
-                        Win32_perror("set socket to blocking");
-                    } else {
-                        try {
-                            ThreadConnection tc{ std::make_unique<CConnection>(std::move(usock)), std::thread() };
-                            CConnection *pConnection = tc.m_pConn.get();
-                            tc.m_thread = std::thread([=] { pConnection->run(); });
-                            vTConn.push_back(std::move(tc));
-                        } catch (const std::system_error& e) {
-                            std::fprintf(stderr, "exception system_error when trying to launch new connection thread: %s\n", e.what());
-                        }
+                    try {
+                        usock.set_to_blocking();
+                        ThreadConnection tc{ std::make_unique<CConnection>(std::move(usock)), std::thread() };
+                        CConnection *pConnection = tc.m_pConn.get();
+                        tc.m_thread = std::thread([=] { pConnection->run(); });
+                        vTConn.push_back(std::move(tc));
+                    } catch (const std::system_error& e) {
+                        std::fprintf(stderr, "exception system_error when trying to handle a new request: %s\n", e.what());
                     }
                 }
                 break;
