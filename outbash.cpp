@@ -520,11 +520,11 @@ private:
         void run()
         {
             PROCESS_INFORMATION pi;
+            std::unique_ptr<OutbashStdRedirects> redir(nullptr);
             {
                 std::string run;
                 std::string cd;
                 std::unique_ptr<EnvVars> vars(nullptr);
-                std::unique_ptr<OutbashStdRedirects> redir(nullptr);
                 auto vars_cp = [&] { if (!vars) vars.reset(new EnvVars(initial_env_vars)); return vars.get(); };
                 auto inst_redir = [&] { if (!redir) redir.reset(new OutbashStdRedirects); return redir.get(); };
 
@@ -567,6 +567,9 @@ private:
                 exit_code = (DWORD)-1;
             }
             ::CloseHandle(pi.hProcess);
+
+            if (redir.get())
+                redir.get()->close();
 
             char buf_rc[16]; (void)std::snprintf(buf_rc, 16, "%u\n", (unsigned int)exit_code);
             send_all(m_usock.get(), buf_rc, std::strlen(buf_rc), 0);

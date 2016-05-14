@@ -48,8 +48,9 @@ class StdRedirects
 public:
     enum role_e { REDIR_STDIN, REDIR_STDOUT, REDIR_STDERR };
 public:
-    StdRedirects();
-    ~StdRedirects();
+    StdRedirects() noexcept;
+    ~StdRedirects() noexcept;
+    void close() noexcept;
     StdRedirects(const StdRedirects&) = delete;
     StdRedirects& operator =(const StdRedirects&) = delete;
     void adopt_handle(role_e role, HANDLE h);
@@ -57,6 +58,7 @@ public:
     void set_same_as_other(role_e role, role_e other);
     AttributeHandleList attribute_handle_list() const;
     HANDLE get_handle(role_e role) const;
+    HANDLE get_owned_handle(role_e role) const;
 private:
     std::array<HANDLE, 3>  m_handleOwned;
     std::array<HANDLE, 3>  m_handle;

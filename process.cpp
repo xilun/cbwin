@@ -89,7 +89,7 @@ AttributeHandleList::AttributeHandleList(std::vector<HANDLE> handle_list)
     if (!ok) throw_last_error("UpdateProcThreadAttribute() failed");
 }
 
-static void free_handle(HANDLE& h)
+static void free_handle(HANDLE& h) noexcept
 {
     if (h != NULL && h != INVALID_HANDLE_VALUE) {
         ::CloseHandle(h);
@@ -115,14 +115,19 @@ static HANDLE open_inheritable_nul(bool output)
 static const HANDLE inheritable_nul_input = open_inheritable_nul(false);
 static const HANDLE inheritable_nul_output = open_inheritable_nul(true);
 
-StdRedirects::StdRedirects() : m_handleOwned{}
+StdRedirects::StdRedirects() noexcept : m_handleOwned{}
 {
     m_handle[REDIR_STDIN] = ::GetStdHandle(STD_INPUT_HANDLE);
     m_handle[REDIR_STDOUT] = ::GetStdHandle(STD_OUTPUT_HANDLE);
     m_handle[REDIR_STDERR] = ::GetStdHandle(STD_ERROR_HANDLE);
 }
 
-StdRedirects::~StdRedirects()
+StdRedirects::~StdRedirects() noexcept
+{
+    close();
+}
+
+void StdRedirects::close() noexcept
 {
     free_handle(m_handleOwned[REDIR_STDIN]);
     free_handle(m_handleOwned[REDIR_STDOUT]);
@@ -148,6 +153,11 @@ void StdRedirects::set_same_as_other(role_e role, role_e other)
 HANDLE StdRedirects::get_handle(role_e role) const
 {
     return m_handle.at(role);
+}
+
+HANDLE StdRedirects::get_owned_handle(role_e role) const
+{
+    return m_handleOwned.at(role);
 }
 
 AttributeHandleList StdRedirects::attribute_handle_list() const
