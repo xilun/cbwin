@@ -441,9 +441,10 @@ static void forward_state_down(struct forward_state *fs)
     fs->buf.fill = 0;
 }
 
-// If std fd are redirected to network sockets, we might not want to abort
-// on some connection/network errors. The following list has been pulled
-// out of thin air, but seems reasonable.
+// If std fd are redirected to network sockets (on the WSL side, not just the
+// TCP loopback redirection forwarding machinery), we might not want to abort
+// on some connection/network errors. The following list has been pulled out
+// of thin air, but seems reasonable.
 static const int potential_connection_errors[] = {
     EPIPE,
     ECONNRESET,
