@@ -43,9 +43,9 @@ You can redirect input and output:
     c:\Users>
     xilun@WINWIN:/mnt/c/Users$ 
 
-Note that it is not recommended to redirect Win32 processes that are launched in the "background" (like with `wstart`
-- more precisely if any Win32 process is created by the one you launched with its standard handles inherited and the
-command does not wait for its termination). This might change in a future release.
+Note that it is not recommended to redirect Win32 processes that are launched in the "background" (like with
+`wstart` - more precisely if any Win32 process is created by the one you launched with its standard handles
+inherited and the command does not wait for its termination). This might change in a future release.
 
 Other example to launch `msbuild` to rebuild `outbash.exe`, which shows that return codes are propagated:
 
