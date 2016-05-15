@@ -47,6 +47,27 @@ Note that it is not recommended to redirect Win32 processes that are launched in
 `wstart` - more precisely if any Win32 process is created by the one you launched with its standard handles
 inherited and the command does not wait for its termination). This might change in a future release.
 
+The environment block for launched processes is the one `outbash.exe` was started with, but it can be modified for
+individual commands. The `--env` option allows to set environment variables for the command. Parameters after this
+option are interpreted as environment variable definitions until one starts with "`--`" or a parameter does not contain
+an "`=`" character. An empty value erases the variable. Remaining command line arguments are used to compose the
+Windows command line. All the options interpreted by the launcher must be given at the start, before the Windows
+command line.
+
+    xilun@WINWIN:/mnt/c/Users$ wcmd --env TITI=TOTO TATA=TUTU set
+    [...]
+    SystemRoot=C:\WINDOWS
+    TATA=TUTU
+    TEMP=C:\Users\xilun\AppData\Local\Temp
+    TITI=TOTO
+    TMP=C:\Users\xilun\AppData\Local\Temp
+    [...]
+    xilun@WINWIN:/mnt/c/Users$ wcmd --env TEMP= set
+    [...]
+    SystemRoot=C:\WINDOWS
+    TMP=C:\Users\xilun\AppData\Local\Temp
+    [...]
+
 Other example to launch `msbuild` to rebuild `outbash.exe`, which shows that return codes are propagated:
 
     xilun@WINWIN:/mnt/c/Users/xilun/Documents/Projects/cbwin/vs$ wcmd '"C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" amd64 && msbuild /t:Rebuild /p:Configuration=Release /m cbwin.sln'
@@ -78,27 +99,6 @@ Unfortunately Windows does not allow to replace open files, and that includes `.
 a process that is still running (the above session was launched from an `outbash.exe` copied out of the `Release/`
 directory, otherwise it would have failed). Win32 also has no equivalent of `exec()`, so we would not be able to
 update a running `outbash.exe` anyway.
-
-The environment block for launched processes is the one `outbash.exe` was started with, but it can be modified for
-individual commands. The `--env` option allows to set environment variables for the command. Parameters after this
-option are interpreted as environment variable definitions until one starts with "`--`" or a parameter does not contain
-an "`=`" character. An empty value erases the variable. Remaining command line arguments are used to compose the
-Windows command line. All the options interpreted by the launcher must be given at the start, before the Windows
-command line.
-
-    xilun@WINWIN:/mnt/c/Users$ wcmd --env TITI=TOTO TATA=TUTU set
-    [...]
-    SystemRoot=C:\WINDOWS
-    TATA=TUTU
-    TEMP=C:\Users\xilun\AppData\Local\Temp
-    TITI=TOTO
-    TMP=C:\Users\xilun\AppData\Local\Temp
-    [...]
-    xilun@WINWIN:/mnt/c/Users$ wcmd --env TEMP= set
-    [...]
-    SystemRoot=C:\WINDOWS
-    TMP=C:\Users\xilun\AppData\Local\Temp
-    [...]
 
 # warnings
 Anybody with access to TCP 127.0.0.1 can launch anything with the privileges of the user who launched `outbash.exe`.
