@@ -30,7 +30,20 @@ If in doubt use `wcmd` to launch Win32 command line tools, and `wstart` to launc
     xilun@WINWIN:/mnt/c/Users$ wstart notepad
     xilun@WINWIN:/mnt/c/Users$ 
 
-Other example to launch `msbuild` to rebuild `outbash.exe`:
+You can redirect input and output:
+
+    xilun@WINWIN:/mnt/c/Users$ wcmd dir | grep xilun
+    15/05/2016  05:09    <DIR>          xilun
+    xilun@WINWIN:/mnt/c/Users$ wcmd dir > xilun/foobar
+    xilun@WINWIN:/mnt/c/Users$ wc xilun/foobar
+     12  50 457 xilun/foobar
+    xilun@WINWIN:/mnt/c/Users$ 
+
+Note that it is not recommended to redirect Win32 processes that are launched in the "background" (like with `wstart`
+- more precisely if any Win32 process is created by the one you launched with its standard handles inherited and the
+command does not wait for its termination). This might change in a future release.
+
+Other example to launch `msbuild` to rebuild `outbash.exe`, which shows that return codes are propagated:
 
     xilun@WINWIN:/mnt/c/Users/xilun/Documents/Projects/cbwin/vs$ wcmd '"C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" amd64 && msbuild /t:Rebuild /p:Configuration=Release /m cbwin.sln'
     Microsoft (R) Build Engine, version 14.0.25123.0
