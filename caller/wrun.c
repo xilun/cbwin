@@ -233,7 +233,7 @@ static void shift(int *pargc, char ***pargv)
 static void check_argc(int argc)
 {
     if (argc < 1) {
-        dprintf(STDERR_FILENO,  "%s: no command\n", tool_name);
+        dprintf(STDERR_FILENO, "%s: no command\n", tool_name);
         terminate_nocore();
     }
 }
@@ -278,11 +278,11 @@ static void fd_set_nonblock(int fd)
 {
     int flags = fcntl(fd, F_GETFL);
     if (flags < 0) {
-        dprintf(STDERR_FILENO,  "%s: fcntl(%d, F_GETFL) failed: %s\n", tool_name, fd, strerror(errno));
+        dprintf(STDERR_FILENO, "%s: fcntl(%d, F_GETFL) failed: %s\n", tool_name, fd, strerror(errno));
         abort();
     }
     if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-        dprintf(STDERR_FILENO,  "%s: fcntl(%d, F_SETFL, flags | O_NONBLOCK) failed: %s\n", tool_name, fd, strerror(errno));
+        dprintf(STDERR_FILENO, "%s: fcntl(%d, F_SETFL, flags | O_NONBLOCK) failed: %s\n", tool_name, fd, strerror(errno));
         abort();
     }
 }
@@ -339,7 +339,7 @@ struct listening_socket socket_listen_one_loopback()
     struct listening_socket lsock = NO_LISTENING_SOCKET;
     lsock.sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (lsock.sockfd < 0) {
-        dprintf(STDERR_FILENO,  "%s: socket() failed: %s\n", tool_name, strerror(errno));
+        dprintf(STDERR_FILENO, "%s: socket() failed: %s\n", tool_name, strerror(errno));
         terminate_nocore();
     }
 
@@ -349,19 +349,19 @@ struct listening_socket socket_listen_one_loopback()
     serv_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     serv_addr.sin_port = 0;
     if (bind(lsock.sockfd, (const struct sockaddr *)&serv_addr, sizeof(serv_addr)) != 0) {
-        dprintf(STDERR_FILENO,  "%s: bind() failed: %s\n", tool_name, strerror(errno));
+        dprintf(STDERR_FILENO, "%s: bind() failed: %s\n", tool_name, strerror(errno));
         terminate_nocore();
     }
     socklen_t namelen = sizeof(serv_addr);
     if (getsockname(lsock.sockfd, (struct sockaddr *)&serv_addr, &namelen) != 0) {
-        dprintf(STDERR_FILENO,  "%s: getsockname() failed: %s\n", tool_name, strerror(errno));
+        dprintf(STDERR_FILENO, "%s: getsockname() failed: %s\n", tool_name, strerror(errno));
         terminate_nocore();
     }
 
     lsock.port = ntohs(serv_addr.sin_port);
 
     if (listen(lsock.sockfd, 1) != 0) {
-        dprintf(STDERR_FILENO,  "%s: listen() failed: %s\n", tool_name, strerror(errno));
+        dprintf(STDERR_FILENO, "%s: listen() failed: %s\n", tool_name, strerror(errno));
         terminate_nocore();
     }
 
@@ -378,7 +378,7 @@ int accept_and_close_listener(struct listening_socket *lsock)
         sock = accept(lsock->sockfd, (struct sockaddr *)&client_addr, &len);
     } while (sock < 0 && errno == EINTR);
     if (sock < 0) {
-        dprintf(STDERR_FILENO,  "%s: accept() failed: %s\n", tool_name, strerror(errno));
+        dprintf(STDERR_FILENO, "%s: accept() failed: %s\n", tool_name, strerror(errno));
         terminate_nocore();
     }
     // hopefully, like under Linux, WSL closes reliably:
@@ -403,7 +403,7 @@ static int get_return_code(int sock_ctrl)
         res = recv(sock_ctrl, buf, 128, 0);
     } while (res > 0 || (res < 0 && errno == EINTR));
     if (res != 0) {
-        dprintf(STDERR_FILENO,  "%s: recv() failed: %s\n", tool_name, strerror(errno));
+        dprintf(STDERR_FILENO, "%s: recv() failed: %s\n", tool_name, strerror(errno));
         terminate_nocore();
     }
     return rc;
@@ -498,8 +498,8 @@ static void forward_close_out(struct forward_state *fs, const char *stream_name,
         fs->dead_out = true;
         if (fs->issock_out && !error) {
             if (shutdown(fs->fd_out, SHUT_WR)) {
-                dprintf(STDERR_FILENO,  "%s: %s: will close(%d) because of shutdown(%d, SHUT_WR) error: %s\n",
-                                        tool_name, stream_name, fs->fd_out, fs->fd_out, strerror(errno));
+                dprintf(STDERR_FILENO, "%s: %s: will close(%d) because of shutdown(%d, SHUT_WR) error: %s\n",
+                                       tool_name, stream_name, fs->fd_out, fs->fd_out, strerror(errno));
                 close(fs->fd_out);
                 fs->fd_out = -1;
             }
@@ -529,7 +529,7 @@ static void forward_stream(struct forward_state *fs, const char *stream_name)
             } else if (err_is_connection_broken(errno)) {
                 forward_close_in(fs);
             } else {
-                dprintf(STDERR_FILENO,  "%s: %s: read() error: %s\n", tool_name, stream_name, strerror(errno));
+                dprintf(STDERR_FILENO, "%s: %s: read() error: %s\n", tool_name, stream_name, strerror(errno));
                 abort();
             }
         } else if (res == 0) {
@@ -550,7 +550,7 @@ static void forward_stream(struct forward_state *fs, const char *stream_name)
             } else if (err_is_connection_broken(errno)) {
                 forward_close_out(fs, stream_name, true);
             } else {
-                dprintf(STDERR_FILENO,  "%s: %s: write() error: %s\n", tool_name, stream_name, strerror(errno));
+                dprintf(STDERR_FILENO, "%s: %s: write() error: %s\n", tool_name, stream_name, strerror(errno));
                 abort();
             }
         } else {
@@ -585,7 +585,7 @@ static void fs_init_accept_as_needed(struct forward_state *fs, struct listening_
 int main(int argc, char *argv[])
 {
     if (argc < 1) {
-        dprintf(STDERR_FILENO,  "wcmd/wrun/wstart called without argument\n");
+        dprintf(STDERR_FILENO, "wcmd/wrun/wstart called without argument\n");
         terminate_nocore();
     }
     int tool = get_tool(argv[0]);
@@ -595,7 +595,7 @@ int main(int argc, char *argv[])
           && cwd[strlen(MNT_DRIVE_FS_PREFIX)] <= 'z'
           && (cwd[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '/'
               || cwd[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '\0'))) {
-        dprintf(STDERR_FILENO,  "%s: can't translate a WSL VolFs path to a Win32 one\n", tool_name);
+        dprintf(STDERR_FILENO, "%s: can't translate a WSL VolFs path to a Win32 one\n", tool_name);
         terminate_nocore();
     }
     char* cwd_win32 = convert_drive_fs_path_to_win32(cwd);
@@ -624,17 +624,17 @@ int main(int argc, char *argv[])
 
     char *outbash_port = getenv("OUTBASH_PORT");
     if (outbash_port == NULL) {
-        dprintf(STDERR_FILENO,  "%s: OUTBASH_PORT environment variable not set\n", tool_name);
+        dprintf(STDERR_FILENO, "%s: OUTBASH_PORT environment variable not set\n", tool_name);
         terminate_nocore();
     }
     int port = atoi(outbash_port);
     if (port < 1 || port > 65535) {
-        dprintf(STDERR_FILENO,  "%s: OUTBASH_PORT environment variable does not contain a valid port number\n", tool_name);
+        dprintf(STDERR_FILENO, "%s: OUTBASH_PORT environment variable does not contain a valid port number\n", tool_name);
         terminate_nocore();
     }
     int sock_ctrl = socket(AF_INET, SOCK_STREAM, 0);
     if (sock_ctrl < 0) {
-        dprintf(STDERR_FILENO,  "%s: socket() failed: %s\n", tool_name, strerror(errno));
+        dprintf(STDERR_FILENO, "%s: socket() failed: %s\n", tool_name, strerror(errno));
         terminate_nocore();
     }
 
@@ -690,12 +690,12 @@ int main(int argc, char *argv[])
     serv_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     serv_addr.sin_port = htons(port);
     if (connect(sock_ctrl, (const struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
-        dprintf(STDERR_FILENO,  "%s: connect() failed: %s\n", tool_name, strerror(errno));
+        dprintf(STDERR_FILENO, "%s: connect() failed: %s\n", tool_name, strerror(errno));
         terminate_nocore();
     }
 
     if (send_all(sock_ctrl, outbash_command.str, outbash_command.length, 0) < 0) {
-        dprintf(STDERR_FILENO,  "%s: send_all() failed: %s\n", tool_name, strerror(errno));
+        dprintf(STDERR_FILENO, "%s: send_all() failed: %s\n", tool_name, strerror(errno));
         terminate_nocore();
     }
     shutdown(sock_ctrl, SHUT_WR);
