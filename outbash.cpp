@@ -323,7 +323,10 @@ public:
     {
         HANDLE ev = ::CreateEvent(NULL, FALSE, FALSE, NULL);
         if (ev == NULL) throw_last_error("CreateEvent");
-        if (SOCKET_ERROR == ::WSAEventSelect(m_socket, ev, net_evts)) throw_last_error("WSAEventSelect");
+        if (SOCKET_ERROR == ::WSAEventSelect(m_socket, ev, net_evts)) {
+            ::CloseHandle(ev);
+            throw_last_error("WSAEventSelect");
+        }
         return CUniqueEvent(ev);
     }
 
@@ -418,28 +421,36 @@ public:
             }
         }
     }
-    void complete_connections()
+    void complete_connections(CUniqueSocket& sock_ctrl)
     {
-        std::array<HANDLE, 4> wait_handles{};
+        CUniqueEvent ctrl_close_ev = sock_ctrl.create_auto_event(FD_CLOSE);
+        std::array<HANDLE, 4> wait_handles;
         while (1)
         {
             unsigned int nb = 0;
             for (const auto& ev: m_redir_connect_events) {
                 if (ev.is_valid()) {
-                    wait_handles.at(nb) = ev.get_unchecked();
+                    wait_handles.at(nb + 1) = ev.get_unchecked();
                     nb++;
                 }
             }
             if (!nb)
                 break;
+
+            wait_handles.at(0) = ctrl_close_ev.get_unchecked();
+            nb++;
+
             DWORD wr = ::WaitForMultipleObjects(nb, &wait_handles[0], FALSE, INFINITE);
             if (wr == WAIT_FAILED) throw_last_error("WaitForMultipleObjects");
-            unsigned i = idx_from_evhandle(wait_handles.at(wr - WAIT_OBJECT_0));
+            if (wr == WAIT_OBJECT_0) throw_last_error("Control socket closed while trying to connect redirection sockets");
+            unsigned i = idx_from_evhandle(wait_handles.at(wr - WAIT_OBJECT_0 - 1));
             m_redir_connect_events.at(i).close();
             SOCKET s_i = (SOCKET)get_handle((role_e)i);
             ::shutdown(s_i, i == REDIR_STDIN ? SD_SEND : SD_RECEIVE);
             CUniqueSocket::set_to_blocking(s_i);
         }
+        ctrl_close_ev.close();
+        sock_ctrl.set_to_blocking();
     }
 private:
     unsigned int idx_from_evhandle(HANDLE ev)
@@ -551,7 +562,7 @@ private:
 
                 if (redir.get()) {
                     redir.get()->initiate_connections();
-                    redir.get()->complete_connections();
+                    redir.get()->complete_connections(m_usock);
                 }
 
                 if (start_command(wrun, wcd.c_str(), vars.get(), redir.get(), pi) != 0)

@@ -698,12 +698,12 @@ int main(int argc, char *argv[])
         dprintf(STDERR_FILENO, "%s: send_all() failed: %s\n", tool_name, strerror(errno));
         terminate_nocore();
     }
-    shutdown(sock_ctrl, SHUT_WR);
     string_destroy(&outbash_command);
 
     if (redirects) {
-        static struct forward_state fs[3];
         signal(SIGPIPE, SIG_IGN);
+
+        static struct forward_state fs[3];
         fs_init_accept_as_needed(&fs[STDIN_FILENO],  &lsock_in,  redirects & STDIN_NEEDS_SOCKET_REDIRECT,  STDIN_FILENO);
         fs_init_accept_as_needed(&fs[STDOUT_FILENO], &lsock_out, redirects & STDOUT_NEEDS_SOCKET_REDIRECT, STDOUT_FILENO);
         fs_init_accept_as_needed(&fs[STDERR_FILENO], &lsock_err, redirects & STDERR_NEEDS_SOCKET_REDIRECT, STDERR_FILENO);
