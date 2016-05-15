@@ -565,6 +565,23 @@ static void forward_stream(struct forward_state *fs, const char *stream_name)
         forward_close_in(fs);
 }
 
+static void fs_init_accept_as_needed(struct forward_state *fs, struct listening_socket *lsock, bool redir, int std_fileno)
+{
+    if (redir) {
+        fd_set_nonblock(std_fileno);
+        int sock = accept_and_close_listener(lsock);
+        if (std_fileno == STDIN_FILENO) {
+            shutdown(sock, SHUT_RD);
+            forward_state_init(fs, std_fileno, sock);
+        } else { // STDOUT_FILENO or STDERR_FILENO
+            shutdown(sock, SHUT_WR);
+            forward_state_init(fs, sock, std_fileno);
+        }
+    } else {
+        forward_state_down(fs);
+    }
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 1) {
@@ -687,30 +704,9 @@ int main(int argc, char *argv[])
     if (redirects) {
         static struct forward_state fs[3];
         signal(SIGPIPE, SIG_IGN);
-
-        if (redirects & STDIN_NEEDS_SOCKET_REDIRECT) {
-            fd_set_nonblock(STDIN_FILENO);
-            int sock_in = accept_and_close_listener(&lsock_in);
-            shutdown(sock_in, SHUT_RD);
-            forward_state_init(&fs[STDIN_FILENO], STDIN_FILENO, sock_in);
-        } else
-            forward_state_down(&fs[STDIN_FILENO]);
-
-        if (redirects & STDOUT_NEEDS_SOCKET_REDIRECT) {
-            fd_set_nonblock(STDOUT_FILENO);
-            int sock_out = accept_and_close_listener(&lsock_out);
-            shutdown(sock_out, SHUT_WR);
-            forward_state_init(&fs[STDOUT_FILENO], sock_out, STDOUT_FILENO);
-        } else
-            forward_state_down(&fs[STDOUT_FILENO]);
-
-        if (redirects & STDERR_NEEDS_SOCKET_REDIRECT) {
-            fd_set_nonblock(STDERR_FILENO);
-            int sock_err = accept_and_close_listener(&lsock_err);
-            shutdown(sock_err, SHUT_WR);
-            forward_state_init(&fs[STDERR_FILENO], sock_err, STDERR_FILENO);
-        } else
-            forward_state_down(&fs[STDERR_FILENO]);
+        fs_init_accept_as_needed(&fs[STDIN_FILENO],  &lsock_in,  redirects & STDIN_NEEDS_SOCKET_REDIRECT,  STDIN_FILENO);
+        fs_init_accept_as_needed(&fs[STDOUT_FILENO], &lsock_out, redirects & STDOUT_NEEDS_SOCKET_REDIRECT, STDOUT_FILENO);
+        fs_init_accept_as_needed(&fs[STDERR_FILENO], &lsock_err, redirects & STDERR_NEEDS_SOCKET_REDIRECT, STDERR_FILENO);
 
 #define MY_MAX(x, y) (((x) > (y)) ? (x) : (y))
         int nfds = 0;
