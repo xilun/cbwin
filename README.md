@@ -1,7 +1,19 @@
 # cbwin
 Launch Windows programs from "Bash on Ubuntu on Windows" (WSL) -- or anything doing TCP on 127.0.0.1
 
+main features:
+
+* Win32 command line tools in the console, invoked from WSL
+* Win32 command line tools with redirections to WSL (stdin/stdout/stderr to or from pipe/file)
+* exit codes propagation
+* launch "detached" GUI Windows programs (uses `start` of `cmd`)
+
 # installation
+
+[Binary releases](https://github.com/xilun/cbwin/releases)
+
+Or from source:
+
 1. Build `outbash.exe` (for example with Visual C++ 2015) and use it instead of `bash.exe`
 2. In `caller/`, build `wrun`, `wcmd`, and `wstart` (with `./build.sh`)
 3. Install the binaries in `/usr/local/bin` (with `sudo ./install.sh`)
