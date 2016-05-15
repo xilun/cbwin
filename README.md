@@ -30,7 +30,7 @@ If in doubt use `wcmd` to launch Win32 command line tools, and `wstart` to launc
     xilun@WINWIN:/mnt/c/Users$ wstart notepad
     xilun@WINWIN:/mnt/c/Users$ 
 
-You can redirect input and output:
+You can redirect input and output (avoid doing that with `wstart`, it would behave weirdly):
 
     xilun@WINWIN:/mnt/c/Users$ wcmd dir | grep xilun
     15/05/2016  05:09    <DIR>          xilun
