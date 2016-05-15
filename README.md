@@ -90,4 +90,4 @@ This might not be an issue if you are the only user of your computer. This might
 casual mistakes and not for strong security purposes this is also not an issue.
 
 It is an unfinished work in progress. There are various stuff not-implemented (CRT compatible escaping of the command
-line args, allowing pipes, trying to capture/restore the environment to easily do builds...)
+line args, trying to capture/restore the environment to easily do builds...)
