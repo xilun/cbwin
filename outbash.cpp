@@ -443,7 +443,7 @@ public:
             DWORD wr = ::WaitForMultipleObjects(nb, &wait_handles[0], FALSE, INFINITE);
             if (wr == WAIT_FAILED) throw_last_error("WaitForMultipleObjects");
             if (wr == WAIT_OBJECT_0) throw_last_error("Control socket closed while trying to connect redirection sockets");
-            unsigned i = idx_from_evhandle(wait_handles.at(wr - WAIT_OBJECT_0 - 1));
+            unsigned i = idx_from_evhandle(wait_handles.at(wr - WAIT_OBJECT_0));
             m_redir_connect_events.at(i).close();
             SOCKET s_i = (SOCKET)get_handle((role_e)i);
             ::shutdown(s_i, i == REDIR_STDIN ? SD_SEND : SD_RECEIVE);
