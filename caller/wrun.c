@@ -287,6 +287,14 @@ static void fd_set_nonblock(int fd)
     }
 }
 
+// precondition: fd must not be bad
+static bool is_socket(int fd)
+{
+    struct stat buf;
+    if (fstat(fd, &buf)) abort();
+    return S_ISSOCK(buf.st_mode);
+}
+
 // precondition: fd_1 and fd_2 must not be bad
 static bool are_fd_to_same_thing(int fd_1, int fd_2)
 {
@@ -412,6 +420,8 @@ struct forward_state
 {
     int fd_in;
     int fd_out;
+    bool issock_in;
+    bool issock_out;
     bool ready_in;
     bool ready_out;
     bool dead_in;
@@ -423,6 +433,8 @@ static void forward_state_init(struct forward_state *fs, int fd_in, int fd_out)
 {
     fs->fd_in = fd_in;
     fs->fd_out = fd_out;
+    fs->issock_in = is_socket(fd_in);
+    fs->issock_out = is_socket(fd_out);
     fs->ready_in = false;
     fs->ready_out = false;
     fs->dead_in = false;
@@ -435,6 +447,8 @@ static void forward_state_down(struct forward_state *fs)
 {
     fs->fd_in = -1;
     fs->fd_out = -1;
+    fs->issock_in = false;
+    fs->issock_out = false;
     fs->ready_in = false;
     fs->ready_out = false;
     fs->dead_in = true;
@@ -477,12 +491,23 @@ static void forward_close_in(struct forward_state *fs)
     fs->fd_in = -1;
 }
 
-static void forward_close_out(struct forward_state *fs)
+static void forward_close_out(struct forward_state *fs, const char *stream_name, bool error)
 {
-    fs->ready_out = false;
-    fs->dead_out = true;
-    close(fs->fd_out);
-    fs->fd_out = -1;
+    if (!fs->dead_out) {
+        fs->ready_out = false;
+        fs->dead_out = true;
+        if (fs->issock_out && !error) {
+            if (shutdown(fs->fd_out, SHUT_WR)) {
+                dprintf(STDERR_FILENO,  "%s: %s: will close(%d) because of shutdown(%d, SHUT_WR) error: %s\n",
+                                        tool_name, stream_name, fs->fd_out, fs->fd_out, strerror(errno));
+                close(fs->fd_out);
+                fs->fd_out = -1;
+            }
+        } else {
+            close(fs->fd_out);
+            fs->fd_out = -1;
+        }
+    }
 }
 
 static bool forwardable_stream(struct forward_state *fs)
@@ -523,7 +548,7 @@ static void forward_stream(struct forward_state *fs, const char *stream_name)
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 fs->ready_out = false;
             } else if (err_is_connection_broken(errno)) {
-                forward_close_out(fs);
+                forward_close_out(fs, stream_name, true);
             } else {
                 dprintf(STDERR_FILENO,  "%s: %s: write() error: %s\n", tool_name, stream_name, strerror(errno));
                 abort();
@@ -535,7 +560,7 @@ static void forward_stream(struct forward_state *fs, const char *stream_name)
     }
 
     if (fs->dead_in && fs->buf.fill <= 0 && !fs->dead_out)
-        forward_close_out(fs);
+        forward_close_out(fs, stream_name, false);
     if (fs->dead_out && !fs->dead_in)
         forward_close_in(fs);
 }
@@ -666,6 +691,7 @@ int main(int argc, char *argv[])
         if (redirects & STDIN_NEEDS_SOCKET_REDIRECT) {
             fd_set_nonblock(STDIN_FILENO);
             int sock_in = accept_and_close_listener(&lsock_in);
+            shutdown(sock_in, SHUT_RD);
             forward_state_init(&fs[STDIN_FILENO], STDIN_FILENO, sock_in);
         } else
             forward_state_down(&fs[STDIN_FILENO]);
@@ -673,6 +699,7 @@ int main(int argc, char *argv[])
         if (redirects & STDOUT_NEEDS_SOCKET_REDIRECT) {
             fd_set_nonblock(STDOUT_FILENO);
             int sock_out = accept_and_close_listener(&lsock_out);
+            shutdown(sock_out, SHUT_WR);
             forward_state_init(&fs[STDOUT_FILENO], sock_out, STDOUT_FILENO);
         } else
             forward_state_down(&fs[STDOUT_FILENO]);
@@ -680,6 +707,7 @@ int main(int argc, char *argv[])
         if (redirects & STDERR_NEEDS_SOCKET_REDIRECT) {
             fd_set_nonblock(STDERR_FILENO);
             int sock_err = accept_and_close_listener(&lsock_err);
+            shutdown(sock_err, SHUT_WR);
             forward_state_init(&fs[STDERR_FILENO], sock_err, STDERR_FILENO);
         } else
             forward_state_down(&fs[STDERR_FILENO]);
@@ -699,9 +727,9 @@ int main(int argc, char *argv[])
             FD_ZERO(&wfds);
             int nblive = 0, nbpull = 0;
             for (int i = 0; i < 3; i++) {
-                nblive += (fs[i].fd_in >= 0) + (fs[i].fd_out >= 0);
-                if (fs[i].fd_in  >= 0 && !fs[i].ready_in)  { nbpull++; FD_SET(fs[i].fd_in,  &rfds); }
-                if (fs[i].fd_out >= 0 && !fs[i].ready_out) { nbpull++; FD_SET(fs[i].fd_out, &wfds); }
+                nblive += (!fs[i].dead_in) + (!fs[i].dead_out);
+                if (!fs[i].dead_in  && !fs[i].ready_in)  { assert(fs[i].fd_in >= 0);  nbpull++; FD_SET(fs[i].fd_in,  &rfds); }
+                if (!fs[i].dead_out && !fs[i].ready_out) { assert(fs[i].fd_out >= 0); nbpull++; FD_SET(fs[i].fd_out, &wfds); }
             }
             if (!nblive)
                 break;
@@ -717,8 +745,8 @@ int main(int argc, char *argv[])
                 if (res < 0)
                     abort();
                 for (int i = 0; i < 3; i++) {
-                    if (fs[i].fd_in  >= 0 && FD_ISSET(fs[i].fd_in,  &rfds)) fs[i].ready_in  = true;
-                    if (fs[i].fd_out >= 0 && FD_ISSET(fs[i].fd_out, &wfds)) fs[i].ready_out = true;
+                    if (!fs[i].dead_in  && FD_ISSET(fs[i].fd_in,  &rfds)) fs[i].ready_in  = true;
+                    if (!fs[i].dead_out && FD_ISSET(fs[i].fd_out, &wfds)) fs[i].ready_out = true;
                 }
             }
             forward_stream(&fs[0], "stdin");
