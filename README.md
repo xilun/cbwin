@@ -37,6 +37,10 @@ You can redirect input and output:
     xilun@WINWIN:/mnt/c/Users$ wcmd dir > xilun/foobar
     xilun@WINWIN:/mnt/c/Users$ wc xilun/foobar
      12  50 457 xilun/foobar
+    xilun@WINWIN:/mnt/c/Users$ echo dir | wrun cmd | grep 'c:\\Users'
+    c:\Users>dir
+     Répertoire de c:\Users
+    c:\Users>
     xilun@WINWIN:/mnt/c/Users$ 
 
 Note that it is not recommended to redirect Win32 processes that are launched in the "background" (like with `wstart`
