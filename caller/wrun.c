@@ -103,11 +103,11 @@ static char* agetcwd()
     char* buf = xmalloc(sz);
     while (getcwd(buf, sz) == NULL) {
         if (errno != ERANGE) {
-            perror("getcwd");
+            dprintf(STDERR_FILENO, "%s: getcwd() failed: %s\n", tool_name, strerror(errno));
             abort();
         }
         if (sz >= MY_DYNAMIC_PATH_MAX) {
-            dprintf(STDERR_FILENO, "agetcwd: current directory stupidly way too large\n");
+            dprintf(STDERR_FILENO, "%s: agetcwd: current directory stupidly way too large\n", tool_name);
             abort();
         }
         sz *= 2; if (sz > MY_DYNAMIC_PATH_MAX) sz = MY_DYNAMIC_PATH_MAX;
@@ -274,18 +274,6 @@ static bool linux_fd_is_null_or_bad(int fd)
     return false;
 }
 
-// precondition: fd must not be bad
-/*static bool fd_is_reg(int fd)
-{
-    struct stat buf;
-    int res = fstat(fd, &buf);
-    if (res < 0) {
-        dprintf(STDERR_FILENO,  "%s: fstat(%d) failed: %s\n", tool_name, fd, strerror(errno));
-        abort();
-    }
-    return S_ISREG(buf.st_mode);
-}*/
-
 static void fd_set_nonblock(int fd)
 {
     int flags = fcntl(fd, F_GETFL);
@@ -297,6 +285,19 @@ static void fd_set_nonblock(int fd)
         dprintf(STDERR_FILENO,  "%s: fcntl(%d, F_SETFL, flags | O_NONBLOCK) failed: %s\n", tool_name, fd, strerror(errno));
         abort();
     }
+}
+
+// precondition: fd_1 and fd_2 must not be bad
+static bool are_fd_to_same_thing(int fd_1, int fd_2)
+{
+    struct stat buf_1, buf_2;
+    if (fstat(fd_1, &buf_1)) abort();
+    if (fstat(fd_2, &buf_2)) abort();
+    if ((buf_1.st_mode & S_IFMT) != (buf_2.st_mode & S_IFMT)) return false;
+    if (S_ISCHR(buf_1.st_mode) || S_ISBLK(buf_1.st_mode))
+        return buf_1.st_rdev == buf_2.st_rdev;
+    else
+        return (buf_1.st_dev == buf_2.st_dev) && (buf_1.st_ino == buf_2.st_ino);
 }
 
 static void ask_redirect(struct string* command, const char* field, int fd, int port)
@@ -598,16 +599,26 @@ int main(int argc, char *argv[])
 #define STDIN_NEEDS_SOCKET_REDIRECT     1
 #define STDOUT_NEEDS_SOCKET_REDIRECT    2
 #define STDERR_NEEDS_SOCKET_REDIRECT    4
+#define STDERR_SOCKREDIR_TO_STDOUT      8
     int redirects =   (needs_socket_redirect(STDIN_FILENO)  ? STDIN_NEEDS_SOCKET_REDIRECT  : 0)
                     | (needs_socket_redirect(STDOUT_FILENO) ? STDOUT_NEEDS_SOCKET_REDIRECT : 0);
-//                  | (needs_socket_redirect(STDERR_FILENO) ? STDERR_NEEDS_SOCKET_REDIRECT : 0);
+    if (needs_socket_redirect(STDERR_FILENO)) {
+        if ((redirects & STDOUT_NEEDS_SOCKET_REDIRECT) && are_fd_to_same_thing(STDOUT_FILENO, STDERR_FILENO))
+            redirects |= STDERR_SOCKREDIR_TO_STDOUT;
+        else
+            redirects |= STDERR_NEEDS_SOCKET_REDIRECT;
+    }
+
     struct listening_socket lsock_in = NO_LISTENING_SOCKET;
     struct listening_socket lsock_out = NO_LISTENING_SOCKET;
+    struct listening_socket lsock_err = NO_LISTENING_SOCKET;
     if (redirects & STDIN_NEEDS_SOCKET_REDIRECT) lsock_in = socket_listen_one_loopback();
     if (redirects & STDOUT_NEEDS_SOCKET_REDIRECT) lsock_out = socket_listen_one_loopback();
+    if (redirects & STDERR_NEEDS_SOCKET_REDIRECT) lsock_err = socket_listen_one_loopback();
     ask_redirect(&outbash_command, "\nstdin:", STDIN_FILENO, lsock_in.port);
     ask_redirect(&outbash_command, "\nstdout:", STDOUT_FILENO, lsock_out.port);
-    //ask_redirect(&outbash_command, "\nstderr:", STDERR_FILENO);
+    ask_redirect(&outbash_command, "\nstderr:", STDERR_FILENO,
+                 (redirects & STDERR_NEEDS_SOCKET_REDIRECT) ? lsock_err.port : lsock_out.port);
 
     switch (tool) {
     case TOOL_WRUN:
@@ -628,7 +639,7 @@ int main(int argc, char *argv[])
         sep = true;
     }
     string_append(&outbash_command, "\n\n");
-    //printf("%s", outbash_command.str);
+    //dprintf(STDOUT_FILENO, "%s", outbash_command.str);
     //return EXIT_FAILURE;
 
     struct sockaddr_in serv_addr;
@@ -649,26 +660,33 @@ int main(int argc, char *argv[])
     string_destroy(&outbash_command);
 
     if (redirects) {
-        static struct forward_state fs[2];
+        static struct forward_state fs[3];
         signal(SIGPIPE, SIG_IGN);
-        if ((redirects & STDIN_NEEDS_SOCKET_REDIRECT) /* && !fd_is_reg(STDIN_FILENO) */ ) {
+
+        if (redirects & STDIN_NEEDS_SOCKET_REDIRECT) {
             fd_set_nonblock(STDIN_FILENO);
             int sock_in = accept_and_close_listener(&lsock_in);
             forward_state_init(&fs[STDIN_FILENO], STDIN_FILENO, sock_in);
         } else
             forward_state_down(&fs[STDIN_FILENO]);
-        if ((redirects & STDOUT_NEEDS_SOCKET_REDIRECT) /* && !fd_is_reg(STDOUT_FILENO) */ ) {
+
+        if (redirects & STDOUT_NEEDS_SOCKET_REDIRECT) {
             fd_set_nonblock(STDOUT_FILENO);
             int sock_out = accept_and_close_listener(&lsock_out);
             forward_state_init(&fs[STDOUT_FILENO], sock_out, STDOUT_FILENO);
         } else
             forward_state_down(&fs[STDOUT_FILENO]);
-        // if ((redirects & STDERR_NEEDS_SOCKET_REDIRECT) /* && !fd_is_reg(STDERR_FILENO) */ )
-        //     fd_set_nonblock(STDERR_FILENO); ...
+
+        if (redirects & STDERR_NEEDS_SOCKET_REDIRECT) {
+            fd_set_nonblock(STDERR_FILENO);
+            int sock_err = accept_and_close_listener(&lsock_err);
+            forward_state_init(&fs[STDERR_FILENO], sock_err, STDERR_FILENO);
+        } else
+            forward_state_down(&fs[STDERR_FILENO]);
 
 #define MY_MAX(x, y) (((x) > (y)) ? (x) : (y))
         int nfds = 0;
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 3; i++) {
             nfds = MY_MAX(nfds, fs[i].fd_in);
             nfds = MY_MAX(nfds, fs[i].fd_out);
         }
@@ -680,7 +698,7 @@ int main(int argc, char *argv[])
             FD_ZERO(&rfds);
             FD_ZERO(&wfds);
             int nblive = 0, nbpull = 0;
-            for (int i = 0; i < 2; i++) {
+            for (int i = 0; i < 3; i++) {
                 nblive += (fs[i].fd_in >= 0) + (fs[i].fd_out >= 0);
                 if (fs[i].fd_in  >= 0 && !fs[i].ready_in)  { nbpull++; FD_SET(fs[i].fd_in,  &rfds); }
                 if (fs[i].fd_out >= 0 && !fs[i].ready_out) { nbpull++; FD_SET(fs[i].fd_out, &wfds); }
@@ -691,18 +709,21 @@ int main(int argc, char *argv[])
                 int res;
                 do {
                     struct timeval immediate = { 0, 0 };
-                    bool fwdable = forwardable_stream(&fs[0]) || forwardable_stream(&fs[1]);
+                    bool fwdable =    forwardable_stream(&fs[0])
+                                   || forwardable_stream(&fs[1])
+                                   || forwardable_stream(&fs[2]);
                     res = select(nfds, &rfds, &wfds, NULL, fwdable ? &immediate : NULL);
                 } while(res < 0 && errno == EINTR);
                 if (res < 0)
                     abort();
-                for (int i = 0; i < 2; i++) {
+                for (int i = 0; i < 3; i++) {
                     if (fs[i].fd_in  >= 0 && FD_ISSET(fs[i].fd_in,  &rfds)) fs[i].ready_in  = true;
                     if (fs[i].fd_out >= 0 && FD_ISSET(fs[i].fd_out, &wfds)) fs[i].ready_out = true;
                 }
             }
             forward_stream(&fs[0], "stdin");
             forward_stream(&fs[1], "stdout");
+            forward_stream(&fs[2], "stderr");
         }
     }
 
