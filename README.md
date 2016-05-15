@@ -1,5 +1,5 @@
 # cbwin
-Callback Win32 CreateProcess from WSL (or anything doing TCP on 127.0.0.1)
+Launch Windows programs from "Bash on Ubuntu on Windows" (WSL) -- or anything doing TCP on 127.0.0.1
 
 # installation
 1. Build `outbash.exe` (for example with Visual C++ 2015) and use it instead of `bash.exe`
