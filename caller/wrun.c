@@ -107,7 +107,7 @@ static char* agetcwd()
             abort();
         }
         if (sz >= MY_DYNAMIC_PATH_MAX) {
-            dprintf(STDERR_FILENO, "%s: agetcwd: current directory stupidly way too large\n", tool_name);
+            dprintf(STDERR_FILENO, "%s: agetcwd: current directory path stupidly way too long\n", tool_name);
             abort();
         }
         sz *= 2; if (sz > MY_DYNAMIC_PATH_MAX) sz = MY_DYNAMIC_PATH_MAX;
@@ -257,21 +257,52 @@ static int recv_line_before_drop(int sockfd, char *buf, size_t bufsz)
     return -1;
 }
 
-static bool linux_fd_is_null_or_bad(int fd)
+struct std_fd_info_struct {
+    int fd;
+    bool is_bad;
+    bool is_dev_null;
+    bool is_a_tty;
+    bool is_socket;
+    struct stat stbuf;
+};
+
+static struct std_fd_info_struct std_fd_info[3];
+
+static void fill_std_fd_info(int fd)
 {
-    struct stat buf;
-    int res = fstat(fd, &buf);
-    if (res < 0) {
-        if (errno == EBADF)
-            return true;
-        abort();
+    assert(fd >= 0);
+    assert(fd < 3);
+    struct std_fd_info_struct *info = &std_fd_info[fd];
+
+    info->fd = fd;
+
+    int r = fstat(info->fd, &info->stbuf);
+    if (r != 0) {
+        if (errno == EBADF) {
+            info->is_bad = true;
+            return;
+        } else {
+            dprintf(STDERR_FILENO, "%s: fstat(%d, &st) failed: %s\n", tool_name, fd, strerror(errno));
+            abort();
+        }
     }
+
     // under Linux, the major and minor of /dev/null is fixed:
-    if (S_ISCHR(buf.st_mode) && major(buf.st_rdev) == 1
-                             && minor(buf.st_rdev) == 3) {
-        return true;
+    if (S_ISCHR(info->stbuf.st_mode) && major(info->stbuf.st_rdev) == 1
+                                     && minor(info->stbuf.st_rdev) == 3) {
+        info->is_dev_null = true;
+        return;
     }
-    return false;
+
+    if (isatty(info->fd)) {
+        info->is_a_tty = true;
+        return;
+    }
+
+    if (S_ISSOCK(info->stbuf.st_mode)) {
+        info->is_socket = true;
+        return;
+    }
 }
 
 static void fd_set_nonblock(int fd)
@@ -287,32 +318,43 @@ static void fd_set_nonblock(int fd)
     }
 }
 
-// precondition: fd must not be bad
-static bool is_socket(int fd)
-{
-    struct stat buf;
-    if (fstat(fd, &buf)) abort();
-    return S_ISSOCK(buf.st_mode);
-}
-
 // precondition: fd_1 and fd_2 must not be bad
-static bool are_fd_to_same_thing(int fd_1, int fd_2)
+static bool are_stdfd_to_same_thing(int fd_1, int fd_2)
 {
-    struct stat buf_1, buf_2;
-    if (fstat(fd_1, &buf_1)) abort();
-    if (fstat(fd_2, &buf_2)) abort();
-    if ((buf_1.st_mode & S_IFMT) != (buf_2.st_mode & S_IFMT)) return false;
-    if (S_ISCHR(buf_1.st_mode) || S_ISBLK(buf_1.st_mode))
-        return buf_1.st_rdev == buf_2.st_rdev;
+    assert(fd_1 >= 0);
+    assert(fd_1 < 3);
+    assert(fd_2 >= 0);
+    assert(fd_2 < 3);
+
+    if (std_fd_info[fd_1].is_bad || std_fd_info[fd_2].is_bad)
+        return false;
+
+    if ((std_fd_info[fd_1].stbuf.st_mode & S_IFMT) != (std_fd_info[fd_2].stbuf.st_mode & S_IFMT))
+        return false;
+
+    if (   S_ISCHR(std_fd_info[fd_1].stbuf.st_mode)
+        || S_ISBLK(std_fd_info[fd_1].stbuf.st_mode))
+        return std_fd_info[fd_1].stbuf.st_rdev == std_fd_info[fd_2].stbuf.st_rdev;
     else
-        return (buf_1.st_dev == buf_2.st_dev) && (buf_1.st_ino == buf_2.st_ino);
+        return (std_fd_info[fd_1].stbuf.st_dev == std_fd_info[fd_2].stbuf.st_dev)
+            && (std_fd_info[fd_1].stbuf.st_ino == std_fd_info[fd_2].stbuf.st_ino);
 }
 
-static void ask_redirect(struct string* command, const char* field, int fd, int port)
+static bool needs_redirect(int stdfd)
 {
-    if (!isatty(fd)) {
+    assert(stdfd >= 0);
+    assert(stdfd < 3);
+
+    return !std_fd_info[stdfd].is_a_tty
+        && !std_fd_info[stdfd].is_bad
+        && !std_fd_info[stdfd].is_dev_null;
+}
+
+static void ask_redirect(struct string* command, const char* field, int stdfd, int port)
+{
+    if (!std_fd_info[stdfd].is_a_tty) {
         string_append(command, field);
-        if (linux_fd_is_null_or_bad(fd)) {
+        if (std_fd_info[stdfd].is_bad || std_fd_info[stdfd].is_dev_null) {
             string_append(command, "nul");
         } else {
             char buf[32];
@@ -320,11 +362,6 @@ static void ask_redirect(struct string* command, const char* field, int fd, int 
             string_append(command, buf);
         }
     }
-}
-
-static bool needs_socket_redirect(int fd)
-{
-    return !isatty(fd) && !linux_fd_is_null_or_bad(fd);
 }
 
 struct listening_socket {
@@ -429,12 +466,15 @@ struct forward_state
     struct forward_buffer buf;
 };
 
-static void forward_state_init(struct forward_state *fs, int fd_in, int fd_out)
+#define FORWARD_STATE_IN_IS_SOCKET  1
+#define FORWARD_STATE_OUT_IS_SOCKET 2
+
+static void forward_state_init(struct forward_state *fs, int fd_in, int fd_out, int flags)
 {
     fs->fd_in = fd_in;
     fs->fd_out = fd_out;
-    fs->issock_in = is_socket(fd_in);
-    fs->issock_out = is_socket(fd_out);
+    fs->issock_in = (flags & FORWARD_STATE_IN_IS_SOCKET);
+    fs->issock_out = (flags & FORWARD_STATE_OUT_IS_SOCKET);
     fs->ready_in = false;
     fs->ready_out = false;
     fs->dead_in = false;
@@ -572,10 +612,16 @@ static void fs_init_accept_as_needed(struct forward_state *fs, struct listening_
         int sock = accept_and_close_listener(lsock);
         if (std_fileno == STDIN_FILENO) {
             shutdown(sock, SHUT_RD);
-            forward_state_init(fs, std_fileno, sock);
+            int flags = FORWARD_STATE_OUT_IS_SOCKET;
+            if (std_fd_info[std_fileno].is_socket)
+                flags |= FORWARD_STATE_IN_IS_SOCKET;
+            forward_state_init(fs, std_fileno, sock, flags);
         } else { // STDOUT_FILENO or STDERR_FILENO
             shutdown(sock, SHUT_WR);
-            forward_state_init(fs, sock, std_fileno);
+            int flags = FORWARD_STATE_IN_IS_SOCKET;
+            if (std_fd_info[std_fileno].is_socket)
+                flags |= FORWARD_STATE_OUT_IS_SOCKET;
+            forward_state_init(fs, sock, std_fileno, flags);
         }
     } else {
         forward_state_down(fs);
@@ -589,6 +635,11 @@ int main(int argc, char *argv[])
         terminate_nocore();
     }
     int tool = get_tool(argv[0]);
+
+    fill_std_fd_info(STDIN_FILENO);
+    fill_std_fd_info(STDOUT_FILENO);
+    fill_std_fd_info(STDERR_FILENO);
+
     char* cwd = agetcwd();
     if (!((strncmp(cwd, MNT_DRIVE_FS_PREFIX, strlen(MNT_DRIVE_FS_PREFIX)) == 0)
           && cwd[strlen(MNT_DRIVE_FS_PREFIX)] >= 'a'
@@ -632,7 +683,7 @@ int main(int argc, char *argv[])
         dprintf(STDERR_FILENO, "%s: OUTBASH_PORT environment variable does not contain a valid port number\n", tool_name);
         terminate_nocore();
     }
-    int sock_ctrl = socket(AF_INET, SOCK_STREAM, 0);
+    int sock_ctrl = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock_ctrl < 0) {
         dprintf(STDERR_FILENO, "%s: socket() failed: %s\n", tool_name, strerror(errno));
         terminate_nocore();
@@ -642,10 +693,10 @@ int main(int argc, char *argv[])
 #define STDOUT_NEEDS_SOCKET_REDIRECT    2
 #define STDERR_NEEDS_SOCKET_REDIRECT    4
 #define STDERR_SOCKREDIR_TO_STDOUT      8
-    int redirects =   (needs_socket_redirect(STDIN_FILENO)  ? STDIN_NEEDS_SOCKET_REDIRECT  : 0)
-                    | (needs_socket_redirect(STDOUT_FILENO) ? STDOUT_NEEDS_SOCKET_REDIRECT : 0);
-    if (needs_socket_redirect(STDERR_FILENO)) {
-        if ((redirects & STDOUT_NEEDS_SOCKET_REDIRECT) && are_fd_to_same_thing(STDOUT_FILENO, STDERR_FILENO))
+    int redirects =   (needs_redirect(STDIN_FILENO)  ? STDIN_NEEDS_SOCKET_REDIRECT  : 0)
+                    | (needs_redirect(STDOUT_FILENO) ? STDOUT_NEEDS_SOCKET_REDIRECT : 0);
+    if (needs_redirect(STDERR_FILENO)) {
+        if ((redirects & STDOUT_NEEDS_SOCKET_REDIRECT) && are_stdfd_to_same_thing(STDOUT_FILENO, STDERR_FILENO))
             redirects |= STDERR_SOCKREDIR_TO_STDOUT;
         else
             redirects |= STDERR_NEEDS_SOCKET_REDIRECT;
