@@ -44,6 +44,7 @@
 #include "utf.h"
 #include "env.h"
 #include "process.h"
+#include "win_except.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -324,8 +325,9 @@ public:
         HANDLE ev = ::CreateEvent(NULL, FALSE, FALSE, NULL);
         if (ev == NULL) throw_last_error("CreateEvent");
         if (SOCKET_ERROR == ::WSAEventSelect(m_socket, ev, net_evts)) {
+            DWORD syserr = ::GetLastError();
             ::CloseHandle(ev);
-            throw_last_error("WSAEventSelect");
+            throw_system_error("WSAEventSelect", syserr);
         }
         return CUniqueEvent(ev);
     }
@@ -421,9 +423,8 @@ public:
             }
         }
     }
-    void complete_connections(CUniqueSocket& sock_ctrl)
+    void complete_connections(CUniqueEvent& ctrl_close_ev)
     {
-        CUniqueEvent ctrl_close_ev = sock_ctrl.create_auto_event(FD_CLOSE);
         std::array<HANDLE, 4> wait_handles;
         while (1)
         {
@@ -437,20 +438,18 @@ public:
             if (!nb)
                 break;
 
-            wait_handles.at(0) = ctrl_close_ev.get_unchecked();
+            wait_handles.at(0) = ctrl_close_ev.get_checked();
             nb++;
 
             DWORD wr = ::WaitForMultipleObjects(nb, &wait_handles[0], FALSE, INFINITE);
-            if (wr == WAIT_FAILED) throw_last_error("WaitForMultipleObjects");
-            if (wr == WAIT_OBJECT_0) throw_last_error("Control socket closed while trying to connect redirection sockets");
+            if (wr == WAIT_FAILED) throw_last_error("WaitForMultipleObjects (complete_connections)");
+            if (wr == WAIT_OBJECT_0) throw std::runtime_error("Control socket closed while trying to connect redirection sockets");
             unsigned i = idx_from_evhandle(wait_handles.at(wr - WAIT_OBJECT_0));
             m_redir_connect_events.at(i).close();
             SOCKET s_i = (SOCKET)get_handle((role_e)i);
             ::shutdown(s_i, i == REDIR_STDIN ? SD_SEND : SD_RECEIVE);
             CUniqueSocket::set_to_blocking(s_i);
         }
-        ctrl_close_ev.close();
-        sock_ctrl.set_to_blocking();
     }
 private:
     unsigned int idx_from_evhandle(HANDLE ev)
@@ -532,6 +531,9 @@ private:
         {
             PROCESS_INFORMATION pi;
             std::unique_ptr<OutbashStdRedirects> redir(nullptr);
+            CUniqueEvent ctrl_close_ev;
+
+            // scope for locals lifetime:
             {
                 std::string run;
                 std::string cd;
@@ -560,9 +562,11 @@ private:
                 std::wstring wcd = !cd.empty() ? utf::widen(&cd[3]) : std::wstring();
                 std::wstring wrun = !run.empty() ? utf::widen(&run[4]) : std::wstring();
 
+                ctrl_close_ev = m_usock.create_auto_event(FD_CLOSE);
+
                 if (redir.get()) {
                     redir.get()->initiate_connections();
-                    redir.get()->complete_connections(m_usock);
+                    redir.get()->complete_connections(ctrl_close_ev);
                 }
 
                 if (start_command(wrun, wcd.c_str(), vars.get(), redir.get(), pi) != 0)
@@ -570,7 +574,21 @@ private:
             }
 
             ::CloseHandle(pi.hThread);
-            ::WaitForSingleObject(pi.hProcess, INFINITE);
+
+            bool ctrl_socket_failed = false;
+            DWORD wr;
+            do {
+                HANDLE wait_handles[2] = { ctrl_close_ev.get_unchecked(), pi.hProcess };
+                wr = ::WaitForMultipleObjects(2, &wait_handles[0], FALSE, INFINITE);
+                if (wr == WAIT_FAILED) {
+                    ::CloseHandle(pi.hProcess);
+                    throw_last_error("WaitForMultipleObjects (run)"); // XXX not ideal
+                }
+                if (wr == WAIT_OBJECT_0) {
+                    ctrl_socket_failed = true;
+                    ::TerminateProcess(pi.hProcess, 0xC0000001);
+                }
+            } while (wr != WAIT_OBJECT_0 + 1);
 
             DWORD exit_code;
             if (!::GetExitCodeProcess(pi.hProcess, &exit_code)) {
@@ -582,10 +600,16 @@ private:
             if (redir.get())
                 redir.get()->close();
 
-            char buf_rc[16]; (void)std::snprintf(buf_rc, 16, "%u\n", (unsigned int)exit_code);
-            send_all(m_usock.get(), buf_rc, std::strlen(buf_rc), 0);
+            ctrl_close_ev.close();
 
-            m_usock.shutdown_close();
+            if (!ctrl_socket_failed) {
+                m_usock.set_to_blocking();
+                char buf_rc[16]; (void)std::snprintf(buf_rc, 16, "%u\n", (unsigned int)exit_code);
+                send_all(m_usock.get(), buf_rc, std::strlen(buf_rc), 0);
+                m_usock.shutdown_close();
+            } else {
+                std::fprintf(stderr, "\nControl socket closed unexpectedly: process killed.\n");
+            }
         }
 
     private:

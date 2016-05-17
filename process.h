@@ -28,8 +28,6 @@
 #include <memory>
 #include <array>
 
-[[noreturn]] void throw_last_error(const char* what);
-
 class AttributeHandleList
 {
 public:

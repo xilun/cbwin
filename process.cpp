@@ -23,14 +23,9 @@
 #include <Windows.h>
 
 #include <algorithm>
-#include <system_error>
 
 #include "process.h"
-
-void throw_last_error(const char* what)
-{
-    throw std::system_error(std::error_code(::GetLastError(), std::system_category()), what);
-}
+#include "win_except.h"
 
 static void attribute_list_deleter(LPPROC_THREAD_ATTRIBUTE_LIST attribute_list)
 {
