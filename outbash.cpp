@@ -96,10 +96,10 @@ static std::wstring get_comspec()
     UINT res = ::GetEnvironmentVariableW(L"ComSpec", buf, MAX_PATH+1);
     if (res == 0 && ::GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
         res = ::GetSystemDirectoryW(buf, MAX_PATH+1);
-        if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "GetSystemDirectory error\n"); std::abort(); }
+        if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "outbash: GetSystemDirectory error\n"); std::abort(); }
         return buf + std::wstring(L"\\cmd.exe");
     } else {
-        if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "GetEnvironmentVariable ComSpec error\n"); std::abort(); }
+        if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "outbash: GetEnvironmentVariable ComSpec error\n"); std::abort(); }
         return buf;
     }
 }
@@ -174,7 +174,7 @@ static int start_command(std::wstring cmdline,
     if (dir != nullptr && *dir != L'\0') {
         // CreateProcess will happily use a relative, but we don't want to
         if (!path_is_really_absolute(dir)) {
-            std::fprintf(stderr, "start_command: non-absolute directory parameter: %S\n", dir);
+            std::fprintf(stderr, "outbash: start_command: non-absolute directory parameter: %S\n", dir);
             return 1;
         }
         wdir = dir;
@@ -205,8 +205,8 @@ static int start_command(std::wstring cmdline,
     if (!::CreateProcessW(module, &cmdline[0], NULL, NULL, inherit_handles,
                           CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
                           (LPVOID)env, wdir, (STARTUPINFOW*)&si, &out_pi)) {
-        Win32_perror("CreateProcess");
-        std::fprintf(stderr, "CreateProcess failed (%d) for command: %S\n", ::GetLastError(), cmdline.c_str());
+        Win32_perror("outbash: CreateProcess");
+        std::fprintf(stderr, "outbash: CreateProcess failed (%d) for command: %S\n", ::GetLastError(), cmdline.c_str());
         return 1;
     }
 
@@ -221,7 +221,7 @@ static int init_winsock()
     // Initialize Winsock
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != 0) {
-        fprintf(stderr, "WSAStartup failed: %d\n", iResult);
+        fprintf(stderr, "outbash: WSAStartup failed: %d\n", iResult);
         return 1;
     }
 
@@ -327,9 +327,27 @@ public:
         if (SOCKET_ERROR == ::WSAEventSelect(m_socket, ev, net_evts)) {
             DWORD syserr = ::GetLastError();
             ::CloseHandle(ev);
-            throw_system_error("WSAEventSelect", syserr);
+            throw_system_error("WSAEventSelect (create_auto_event)", syserr);
         }
         return CUniqueEvent(ev);
+    }
+
+    CUniqueEvent create_manual_event(long net_evts)
+    {
+        HANDLE ev = ::WSACreateEvent();
+        if (ev == WSA_INVALID_EVENT) throw_last_error("WSACreateEvent");
+        if (SOCKET_ERROR == ::WSAEventSelect(m_socket, ev, net_evts)) {
+            DWORD syserr = ::GetLastError();
+            ::CloseHandle(ev);
+            throw_system_error("WSAEventSelect (create_manual_event)", syserr);
+        }
+        return CUniqueEvent(ev);
+    }
+
+    void change_event_select(CUniqueEvent& ev, long net_evts)
+    {
+        if (SOCKET_ERROR == ::WSAEventSelect(m_socket, ev.get_unchecked(), net_evts))
+            throw_last_error("WSAEventSelect (change_event_select)");
     }
 
     static void set_to_blocking(SOCKET s)
@@ -423,6 +441,9 @@ public:
             }
         }
     }
+
+    // Complete connections to redirection sockets before the controlling socket
+    // closed, or throw an exception.
     void complete_connections(CUniqueEvent& ctrl_close_ev)
     {
         std::array<HANDLE, 4> wait_handles;
@@ -444,6 +465,7 @@ public:
             DWORD wr = ::WaitForMultipleObjects(nb, &wait_handles[0], FALSE, INFINITE);
             if (wr == WAIT_FAILED) throw_last_error("WaitForMultipleObjects (complete_connections)");
             if (wr == WAIT_OBJECT_0) throw std::runtime_error("Control socket closed while trying to connect redirection sockets");
+            // XXX we should check that we really connected
             unsigned i = idx_from_evhandle(wait_handles.at(wr - WAIT_OBJECT_0));
             m_redir_connect_events.at(i).close();
             SOCKET s_i = (SOCKET)get_handle((role_e)i);
@@ -477,7 +499,7 @@ public:
             CActiveConnection _con(m_usock);
             _con.run();
         } catch (const std::exception& e) {
-            std::fprintf(stderr, "CConnection::run() exception: %s\n", e.what());
+            std::fprintf(stderr, "outbash: CConnection::run() exception: %s\n", e.what());
         }
         m_usock.close();
     }
@@ -487,6 +509,42 @@ private:
     {
     public:
         explicit CActiveConnection(CUniqueSocket& usock) noexcept : m_usock(usock), m_buf() {}
+
+        bool buf_get_line(std::string& out_line)
+        {
+            out_line.clear();
+
+            if (m_buf.size() > line_supported_length)
+                throw std::runtime_error("line too long received from peer");
+
+            char* nlptr = (char*)std::memchr(&m_buf[0], '\n', m_buf.size());
+            if (nlptr) {
+                int pos = (int)(nlptr - &m_buf[0]);
+                out_line.append(&m_buf[0], pos);
+                if (!out_line.empty() && out_line.back() == '\r')
+                    out_line.pop_back();
+                m_buf.replace(0, pos + 1, "");
+                return true;
+            }
+
+            return false;
+        }
+
+        int buf_recv()
+        {
+            size_t buf_orig_size = m_buf.size();
+
+            m_buf.resize(buf_orig_size + ctrl_recv_block_size);
+            int res = ::recv(m_usock.get(), &m_buf[buf_orig_size], ctrl_recv_block_size, 0);
+            if (res < 0) {
+                DWORD err = GetLastError();
+                m_buf.resize(buf_orig_size);
+                SetLastError(err);
+                return res;
+            }
+            m_buf.resize(buf_orig_size + res);
+            return res;
+        }
 
         std::string recv_line()
         {
@@ -508,11 +566,11 @@ private:
                 }
 
                 assert(m_buf.size() == 0);
-                m_buf.resize(8192);
+                m_buf.resize(ctrl_recv_block_size);
                 int res = ::recv(m_usock.get(), &m_buf[0], (int)m_buf.size(), 0);
 
                 if (res < 0) {
-                    Win32_perror("recv");
+                    Win32_perror("outbash: recv");
                     m_buf.clear();
                     throw std::runtime_error("recv() returned an error");
                 }
@@ -531,12 +589,12 @@ private:
         {
             PROCESS_INFORMATION pi;
             std::unique_ptr<OutbashStdRedirects> redir(nullptr);
-            CUniqueEvent ctrl_close_ev;
+            CUniqueEvent ctrl_ev;
 
             // scope for locals lifetime:
             {
-                std::string run;
-                std::string cd;
+                std::wstring wrun;
+                std::wstring wcd;
                 std::unique_ptr<EnvVars> vars(nullptr);
                 auto vars_cp = [&] { if (!vars) vars.reset(new EnvVars(initial_env_vars)); return vars.get(); };
                 auto inst_redir = [&] { if (!redir) redir.reset(new OutbashStdRedirects); return redir.get(); };
@@ -547,9 +605,9 @@ private:
                     if (line == "")
                         break;
                     else if (startswith(line, "run:"))
-                        run = std::move(line);
+                        wrun = utf::widen(&line[4]);
                     else if (startswith(line, "cd:"))
-                        cd = std::move(line);
+                        wcd = utf::widen(&line[3]);
                     else if (startswith(line, "env:"))
                         vars_cp()->set_from_utf8(&line[4]);
                     else if (startswith(line, "stdin:"))
@@ -559,14 +617,12 @@ private:
                     else if (startswith(line, "stderr:"))
                         inst_redir()->parse_redir_param(StdRedirects::REDIR_STDERR, &line[7]);
                 }
-                std::wstring wcd = !cd.empty() ? utf::widen(&cd[3]) : std::wstring();
-                std::wstring wrun = !run.empty() ? utf::widen(&run[4]) : std::wstring();
 
-                ctrl_close_ev = m_usock.create_auto_event(FD_CLOSE);
+                ctrl_ev = m_usock.create_manual_event(FD_CLOSE);
 
                 if (redir.get()) {
                     redir.get()->initiate_connections();
-                    redir.get()->complete_connections(ctrl_close_ev);
+                    redir.get()->complete_connections(ctrl_ev);
                 }
 
                 if (start_command(wrun, wcd.c_str(), vars.get(), redir.get(), pi) != 0)
@@ -575,24 +631,78 @@ private:
 
             ::CloseHandle(pi.hThread);
 
+            m_usock.change_event_select(ctrl_ev, FD_CLOSE | FD_READ);
+
+            bool try_get_line = true;
             bool ctrl_socket_failed = false;
             DWORD wr;
             do {
-                HANDLE wait_handles[2] = { ctrl_close_ev.get_unchecked(), pi.hProcess };
-                wr = ::WaitForMultipleObjects(2, &wait_handles[0], FALSE, INFINITE);
+                const bool ctrl_socket_was_ok = !ctrl_socket_failed;
+
+                HANDLE wait_handles[2] = { ctrl_ev.get_unchecked(), pi.hProcess };
+                wr = ::WaitForMultipleObjects(2, &wait_handles[0], FALSE, try_get_line ? 0 : INFINITE);
+
                 if (wr == WAIT_FAILED) {
                     ::CloseHandle(pi.hProcess);
                     throw_last_error("WaitForMultipleObjects (run)"); // XXX not ideal
                 }
+
                 if (wr == WAIT_OBJECT_0) {
-                    ctrl_socket_failed = true;
-                    ::TerminateProcess(pi.hProcess, 0xC0000001);
+                    WSANETWORKEVENTS ctrl_network_events;
+                    if (SOCKET_ERROR == ::WSAEnumNetworkEvents(m_usock.get(), wait_handles[0], &ctrl_network_events))
+                        throw_last_error("WSAEnumNetworkEvents"); // XXX not ideal
+
+                    if (ctrl_network_events.lNetworkEvents & FD_CLOSE)
+                        ctrl_socket_failed = true;
+
+                    // if FD_READ, try_get_line will eventually be false
+                    // (if not yet ctrl_socket_failed), and ::recv in buf_recv
+                    // will re-enable FD_READ
                 }
+
+                if (try_get_line && !ctrl_socket_failed) {
+                    std::string line;
+                    try {
+                        try_get_line = buf_get_line(line);
+                    } catch (const std::runtime_error& e) {
+                        try_get_line = false;
+                        ctrl_socket_failed = true;
+                        std::fprintf(stderr, "\noutbash: buf_get_line() exception: %s\n", e.what());
+                    }
+
+                    if (try_get_line) {
+                        // XXX: be mad about nul bytes?
+                        if (line == "suspend")
+                            std::fprintf(stderr, "\noutbash: XXX suspend\n");
+                        else if (line == "resume")
+                            std::fprintf(stderr, "\noutbash: XXX resume\n");
+                    }
+                }
+
+                if (!try_get_line && !ctrl_socket_failed) {
+                    int r = buf_recv();
+                    if (r < 0) {
+                        if (WSAGetLastError() != WSAEWOULDBLOCK)
+                            throw_last_error("buf_recv"); // XXX not ideal
+                    } else {
+                        try_get_line = !!r;
+                    }
+                }
+
+                if (ctrl_socket_failed) {
+                    try_get_line = false;
+                    if (ctrl_socket_was_ok) {
+                        m_usock.change_event_select(ctrl_ev, FD_CLOSE);
+                        ::TerminateProcess(pi.hProcess, 0xC0000001);
+                    }
+                }
+
+            // while process not finished:
             } while (wr != WAIT_OBJECT_0 + 1);
 
             DWORD exit_code;
             if (!::GetExitCodeProcess(pi.hProcess, &exit_code)) {
-                Win32_perror("GetExitCodeProcess");
+                Win32_perror("outbash: GetExitCodeProcess");
                 exit_code = (DWORD)-1;
             }
             ::CloseHandle(pi.hProcess);
@@ -600,7 +710,7 @@ private:
             if (redir.get())
                 redir.get()->close();
 
-            ctrl_close_ev.close();
+            ctrl_ev.close();
 
             if (!ctrl_socket_failed) {
                 m_usock.set_to_blocking();
@@ -608,12 +718,13 @@ private:
                 send_all(m_usock.get(), buf_rc, std::strlen(buf_rc), 0);
                 m_usock.shutdown_close();
             } else {
-                std::fprintf(stderr, "\nControl socket closed unexpectedly: process killed.\n");
+                std::fprintf(stderr, "\noutbash: Control socket failed: process killed.\n");
             }
         }
 
     private:
         const size_t line_supported_length = 32768*3 + 16; // in bytes (UTF-8); indicative approx max length (the size can grow to at least that)
+        const int ctrl_recv_block_size = 8192;
         CUniqueSocket&  m_usock;
         std::string     m_buf;
     };
@@ -628,7 +739,7 @@ static std::string get_temp_filename(DWORD unique)
     #define TMP_BUFLEN (MAX_PATH+2)
     wchar_t w_temp_path[TMP_BUFLEN];
     DWORD res = ::GetTempPathW(TMP_BUFLEN, w_temp_path);
-    if (res == 0) { Win32_perror("GetTempPath"); std::exit(EXIT_FAILURE); }
+    if (res == 0) { Win32_perror("outbash: GetTempPath"); std::exit(EXIT_FAILURE); }
     return utf::narrow(w_temp_path) + "outbash." + std::to_string((unsigned int)unique);
 }
 
@@ -639,7 +750,7 @@ static std::string convert_to_wsl_filename(const std::string& win32_filename)
         || !is_ascii_letter(win32_filename[0])
         || win32_filename[1] != ':'
         || win32_filename[2] != '\\') {
-        std::fprintf(stderr, "Unable to convert filename to WSL: %s\n", win32_filename.c_str());
+        std::fprintf(stderr, "outbash: Unable to convert filename to WSL: %s\n", win32_filename.c_str());
         std::exit(EXIT_FAILURE);
     }
     std::string result = "/mnt/";
@@ -663,7 +774,7 @@ static void reap_connections(std::vector<ThreadConnection>& vTConn)
         HANDLE tHdl = (HANDLE)tc.m_thread.native_handle();
         DWORD exit_code;
         if (::GetExitCodeThread(tHdl, &exit_code) == 0) {
-            Win32_perror("GetExitCodeThread");
+            Win32_perror("outbash: GetExitCodeThread");
             // what can we do? I guess leaking is not so bad in that case
             tc.m_thread.detach();
             tc.m_pConn.release();
@@ -701,18 +812,18 @@ int main()
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     serv_addr.sin_port = 0;
-    if (::bind(sock.get(), (const sockaddr *)&serv_addr, sizeof(serv_addr)) != 0) { Win32_perror("bind"); std::exit(EXIT_FAILURE); }
+    if (::bind(sock.get(), (const sockaddr *)&serv_addr, sizeof(serv_addr)) != 0) { Win32_perror("outbash: bind"); std::exit(EXIT_FAILURE); }
     int namelen = sizeof(serv_addr);
-    if (::getsockname(sock.get(), (sockaddr *)&serv_addr, &namelen) != 0) { Win32_perror("getsockname"); std::exit(EXIT_FAILURE); }
+    if (::getsockname(sock.get(), (sockaddr *)&serv_addr, &namelen) != 0) { Win32_perror("outbash: getsockname"); std::exit(EXIT_FAILURE); }
 
-    if (::listen(sock.get(), SOMAXCONN_HINT(600)) != 0) { Win32_perror("listen"); std::exit(EXIT_FAILURE); }
+    if (::listen(sock.get(), SOMAXCONN_HINT(600)) != 0) { Win32_perror("outbash: listen"); std::exit(EXIT_FAILURE); }
 
     CUniqueEvent accept_event = sock.create_auto_event(FD_ACCEPT);
 
     std::string tmp_filename = get_temp_filename(GetCurrentProcessId());
     std::string wsl_tmp_filename = convert_to_wsl_filename(tmp_filename);
     std::FILE *f = _wfopen(utf::widen(tmp_filename).c_str(), L"wb");
-    if (!f) { std::fprintf(stderr, "could not open temporary file %S\n", utf::widen(tmp_filename).c_str()); std::exit(EXIT_FAILURE); }
+    if (!f) { std::fprintf(stderr, "outbash: could not open temporary file %S\n", utf::widen(tmp_filename).c_str()); std::exit(EXIT_FAILURE); }
     std::fprintf(f, "export OUTBASH_PORT=%u\n", (unsigned)ntohs(serv_addr.sin_port));
     std::fprintf(f, ". /etc/bash.bashrc\n");
     std::fprintf(f, ". ~/.bashrc\n");
@@ -736,7 +847,7 @@ int main()
         DWORD timeout = vTConn.empty() ? INFINITE : 5000;
         DWORD wr = ::WaitForMultipleObjects(accept_event.is_valid() ? 2 : 1, wait_handles, FALSE, timeout);
         if (wr == WAIT_FAILED) {
-            Win32_perror("WaitForMultipleObjects");
+            Win32_perror("outbash: WaitForMultipleObjects");
             std::quick_exit(EXIT_FAILURE);
         }
 
@@ -761,16 +872,16 @@ int main()
                     case WSAEMFILE:
                         // there is not much we can do, except notifying the user and
                         // hoping things will get better later
-                        Win32_perror("accept");
+                        Win32_perror("outbash: accept");
                         break;
                     case WSAENETDOWN:
                         // this is really bad, but we will try to continue to wait for bash to terminate
-                        Win32_perror("accept");
+                        Win32_perror("outbash: accept");
                         accept_event.close();
                         sock.close();
                         break;
                     default:
-                        Win32_perror("accept");
+                        Win32_perror("outbash: accept");
                         std::quick_exit(EXIT_FAILURE);
                     }
                 } else {
@@ -782,7 +893,7 @@ int main()
                         tc.m_thread = std::thread([=] { pConnection->run(); });
                         vTConn.push_back(std::move(tc));
                     } catch (const std::system_error& e) {
-                        std::fprintf(stderr, "exception system_error when trying to handle a new request: %s\n", e.what());
+                        std::fprintf(stderr, "outbash: exception system_error when trying to handle a new request: %s\n", e.what());
                     }
                 }
                 break;
