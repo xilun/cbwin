@@ -611,13 +611,13 @@ static void fs_init_accept_as_needed(struct forward_state *fs, struct listening_
         fd_set_nonblock(std_fileno);
         int sock = accept_and_close_listener(lsock);
         if (std_fileno == STDIN_FILENO) {
-            shutdown(sock, SHUT_RD);
+            // shutdown(sock, SHUT_RD);
             int flags = FORWARD_STATE_OUT_IS_SOCKET;
             if (std_fd_info[std_fileno].is_socket)
                 flags |= FORWARD_STATE_IN_IS_SOCKET;
             forward_state_init(fs, std_fileno, sock, flags);
         } else { // STDOUT_FILENO or STDERR_FILENO
-            shutdown(sock, SHUT_WR);
+            // shutdown(sock, SHUT_WR);
             int flags = FORWARD_STATE_IN_IS_SOCKET;
             if (std_fd_info[std_fileno].is_socket)
                 flags |= FORWARD_STATE_OUT_IS_SOCKET;

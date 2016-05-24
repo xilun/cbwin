@@ -437,7 +437,7 @@ public:
                         m_redir_connect_events.at(i) = std::move(conn_ev);
                     } else {
                         conn_ev.close();
-                        ::shutdown(sock.get(), i == REDIR_STDIN ? SD_SEND : SD_RECEIVE);
+                        // ::shutdown(sock.get(), i == REDIR_STDIN ? SD_SEND : SD_RECEIVE);
                         sock.set_to_blocking();
                         adopt_handle((role_e)i, (HANDLE)sock.release());
                     }
@@ -473,7 +473,7 @@ public:
             unsigned i = idx_from_evhandle(wait_handles.at(wr - WAIT_OBJECT_0));
             m_redir_connect_events.at(i).close();
             SOCKET s_i = (SOCKET)get_handle((role_e)i);
-            ::shutdown(s_i, i == REDIR_STDIN ? SD_SEND : SD_RECEIVE);
+            // ::shutdown(s_i, i == REDIR_STDIN ? SD_SEND : SD_RECEIVE);
             CUniqueSocket::set_to_blocking(s_i);
         }
     }
