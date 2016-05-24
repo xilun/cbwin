@@ -627,7 +627,7 @@ private:
                 if (redir.get()) {
                     struct sockaddr_in caller_addr;
                     int namelen = sizeof(caller_addr);
-                    if (::getsockname(m_usock.get(), (sockaddr *)&caller_addr, &namelen) != 0) {
+                    if (::getpeername(m_usock.get(), (sockaddr *)&caller_addr, &namelen) != 0) {
                         Win32_perror("outbash: getsockname (caller)");
                         caller_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // fallback
                     }
