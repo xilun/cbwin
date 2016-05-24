@@ -388,8 +388,10 @@ private:
 class OutbashStdRedirects : public StdRedirects
 {
 public:
-    enum { STDH_INHERIT = 0, STDH_NULL = -1 }; // positive number: TCP port on loopback to redirect to
+    enum { STDH_INHERIT = 0, STDH_NULL = -1 }; // positive number: TCP port to redirect to
+
     OutbashStdRedirects() : StdRedirects(), m_redirects(), m_redir_connect_events(), m_same_out_err_socket(false) {}
+
     void parse_redir_param(role_e role, const char* param)
     {
         if (!std::strcmp(param, "nul")) {
@@ -404,7 +406,9 @@ public:
             throw std::runtime_error("unrecognized redirect wanted");
         }
     }
-    void initiate_connections()
+
+    // caller_addr: in network order
+    void initiate_connections(uint32_t caller_addr)
     {
         if (m_redirects[REDIR_STDIN] > 0
             && (   m_redirects[REDIR_STDIN] == m_redirects[REDIR_STDOUT]
@@ -424,7 +428,7 @@ public:
                     struct sockaddr_in redir_addr;
                     std::memset(&redir_addr, 0, sizeof(redir_addr));
                     redir_addr.sin_family = AF_INET;
-                    redir_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+                    redir_addr.sin_addr.s_addr = caller_addr;
                     redir_addr.sin_port = htons((unsigned short)m_redirects[i]);
                     int res = ::connect(sock.get(), (const struct sockaddr *)&redir_addr, sizeof(redir_addr));
                     if (res == SOCKET_ERROR && ::GetLastError() != WSAEWOULDBLOCK) throw_last_error("connect");
@@ -621,7 +625,13 @@ private:
                 ctrl_ev = m_usock.create_manual_event(FD_CLOSE);
 
                 if (redir.get()) {
-                    redir.get()->initiate_connections();
+                    struct sockaddr_in caller_addr;
+                    int namelen = sizeof(caller_addr);
+                    if (::getsockname(m_usock.get(), (sockaddr *)&caller_addr, &namelen) != 0) {
+                        Win32_perror("outbash: getsockname (caller)");
+                        caller_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // fallback
+                    }
+                    redir.get()->initiate_connections(caller_addr.sin_addr.s_addr);
                     redir.get()->complete_connections(ctrl_ev);
                 }
 
