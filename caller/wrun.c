@@ -258,17 +258,22 @@ static int recv_line_before_drop(int sockfd, char *buf, size_t bufsz)
 }
 
 struct std_fd_info_struct {
+
+    /* identity: */
     int fd;
     bool is_bad;
     bool is_dev_null;
     bool is_a_tty;
     bool is_socket;
     struct stat stbuf;
+
+    /* policy: */
+    bool redirect;
 };
 
 static struct std_fd_info_struct std_fd_info[3];
 
-static void fill_std_fd_info(int fd)
+static void fill_std_fd_info_identity(int fd)
 {
     assert(fd >= 0);
     assert(fd < 3);
@@ -340,19 +345,26 @@ static bool are_stdfd_to_same_thing(int fd_1, int fd_2)
             && (std_fd_info[fd_1].stbuf.st_ino == std_fd_info[fd_2].stbuf.st_ino);
 }
 
-static bool needs_redirect(int stdfd)
+static void decide_will_redirect(int stdfd, bool force)
+{
+    assert(stdfd >= 0);
+    assert(stdfd < 3);
+    std_fd_info[stdfd].redirect = force || !std_fd_info[stdfd].is_a_tty;
+}
+
+static bool needs_socket_redirect(int stdfd)
 {
     assert(stdfd >= 0);
     assert(stdfd < 3);
 
-    return !std_fd_info[stdfd].is_a_tty
+    return  std_fd_info[stdfd].redirect
         && !std_fd_info[stdfd].is_bad
         && !std_fd_info[stdfd].is_dev_null;
 }
 
 static void ask_redirect(struct string* command, const char* field, int stdfd, int port)
 {
-    if (!std_fd_info[stdfd].is_a_tty) {
+    if (std_fd_info[stdfd].redirect) {
         string_append(command, field);
         if (std_fd_info[stdfd].is_bad || std_fd_info[stdfd].is_dev_null) {
             string_append(command, "nul");
@@ -605,9 +617,9 @@ static void forward_stream(struct forward_state *fs, const char *stream_name)
         forward_close_in(fs);
 }
 
-static void fs_init_accept_as_needed(struct forward_state *fs, struct listening_socket *lsock, bool redir, int std_fileno)
+static void fs_init_accept_as_needed(struct forward_state *fs, struct listening_socket *lsock, bool own_redir, int std_fileno)
 {
-    if (redir) {
+    if (own_redir) {
         fd_set_nonblock(std_fileno);
         int sock = accept_and_close_listener(lsock);
         if (std_fileno == STDIN_FILENO) {
@@ -636,9 +648,9 @@ int main(int argc, char *argv[])
     }
     int tool = get_tool(argv[0]);
 
-    fill_std_fd_info(STDIN_FILENO);
-    fill_std_fd_info(STDOUT_FILENO);
-    fill_std_fd_info(STDERR_FILENO);
+    fill_std_fd_info_identity(STDIN_FILENO);
+    fill_std_fd_info_identity(STDOUT_FILENO);
+    fill_std_fd_info_identity(STDERR_FILENO);
 
     char* cwd = agetcwd();
     if (!((strncmp(cwd, MNT_DRIVE_FS_PREFIX, strlen(MNT_DRIVE_FS_PREFIX)) == 0)
@@ -655,6 +667,8 @@ int main(int argc, char *argv[])
     struct string outbash_command = string_create("cd:");
     string_append(&outbash_command, cwd_win32); free(cwd_win32);
 
+    bool force_redirects = false;
+
     shift(&argc, &argv);
     while (argc && !strncmp(argv[0], "--", 2)) {
         if (!strcmp(argv[0], "--")) {
@@ -670,8 +684,16 @@ int main(int argc, char *argv[])
                 shift(&argc, &argv);
             }
         }
+        if (!strcmp(argv[0], "--force-redirects")) {
+            force_redirects = true;
+            shift(&argc, &argv);
+        }
     }
     check_argc(argc);
+
+    decide_will_redirect(STDIN_FILENO,  force_redirects);
+    decide_will_redirect(STDOUT_FILENO, force_redirects);
+    decide_will_redirect(STDERR_FILENO, force_redirects);
 
     char *outbash_port = getenv("OUTBASH_PORT");
     if (outbash_port == NULL) {
@@ -693,9 +715,9 @@ int main(int argc, char *argv[])
 #define STDOUT_NEEDS_SOCKET_REDIRECT    2
 #define STDERR_NEEDS_SOCKET_REDIRECT    4
 #define STDERR_SOCKREDIR_TO_STDOUT      8
-    int redirects =   (needs_redirect(STDIN_FILENO)  ? STDIN_NEEDS_SOCKET_REDIRECT  : 0)
-                    | (needs_redirect(STDOUT_FILENO) ? STDOUT_NEEDS_SOCKET_REDIRECT : 0);
-    if (needs_redirect(STDERR_FILENO)) {
+    int redirects =   (needs_socket_redirect(STDIN_FILENO)  ? STDIN_NEEDS_SOCKET_REDIRECT  : 0)
+                    | (needs_socket_redirect(STDOUT_FILENO) ? STDOUT_NEEDS_SOCKET_REDIRECT : 0);
+    if (needs_socket_redirect(STDERR_FILENO)) {
         if ((redirects & STDOUT_NEEDS_SOCKET_REDIRECT) && are_stdfd_to_same_thing(STDOUT_FILENO, STDERR_FILENO))
             redirects |= STDERR_SOCKREDIR_TO_STDOUT;
         else
