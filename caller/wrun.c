@@ -671,10 +671,12 @@ int main(int argc, char *argv[])
 
     shift(&argc, &argv);
     while (argc && !strncmp(argv[0], "--", 2)) {
+
         if (!strcmp(argv[0], "--")) {
             shift(&argc, &argv);
             break;
         }
+
         if (!strcmp(argv[0], "--env")) {
             shift(&argc, &argv);
             while (argc && strncmp(argv[0], "--", 2) != 0
@@ -683,10 +685,12 @@ int main(int argc, char *argv[])
                 string_append(&outbash_command, argv[0]);
                 shift(&argc, &argv);
             }
-        }
-        if (!strcmp(argv[0], "--force-redirects")) {
+        } else if (!strcmp(argv[0], "--force-redirects")) {
             force_redirects = true;
             shift(&argc, &argv);
+        } else {
+            dprintf(STDERR_FILENO, "%s: unknown command line option: %s\n", tool_name, argv[0]);
+            terminate_nocore();
         }
     }
     check_argc(argc);
