@@ -45,6 +45,7 @@
 #include "env.h"
 #include "process.h"
 #include "win_except.h"
+#include "ntsuspend.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -682,10 +683,13 @@ private:
 
                     if (try_get_line) {
                         // XXX: be mad about nul bytes?
-                        if (line == "suspend")
-                            std::fprintf(stderr, "\noutbash: XXX suspend\n");
-                        else if (line == "resume")
-                            std::fprintf(stderr, "\noutbash: XXX resume\n");
+                        if (line == "suspend") {
+                            // BUG: m_usock is non-blocking...
+                            NT_Suspend(pi.hProcess);
+                            send_all(m_usock.get(), "suspend_ok\n", std::strlen("suspend_ok\n"), 0);
+                        } else if (line == "resume") {
+                            NT_Resume(pi.hProcess);
+                        }
                     }
                 }
 
@@ -814,6 +818,11 @@ int main()
 {
     init_locale_console_cp();
     if (init_winsock() != 0) std::exit(EXIT_FAILURE);
+    if (!ImportNtProcess()) {
+        Win32_perror("outbash: ImportNtProcess");
+        std::fprintf(stderr, "outbash: could not import Nt suspend/resume process functions\n");
+        std::exit(EXIT_FAILURE);
+    }
 
     CUniqueSocket sock(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 

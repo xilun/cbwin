@@ -662,7 +662,47 @@ static void fs_init_accept_as_needed(struct forward_state *fs, struct listening_
     }
 }
 
-enum state_e { RUNNING, TERMINATED };
+volatile sig_atomic_t tstop_req;
+static void tstop_handler(int n)
+{
+    (void)n;
+    tstop_req = 1;
+}
+
+// States:
+//
+// RUNNING <-> SUSPEND_PENDING   # propagate suspend/resume
+//  |    \     /     |
+//  |     v   v      |
+//  |     DYING      |  # ctrl socket failed while trying to suspend/resume
+//  |       |        |
+//  |       v        |
+//  +-> TERMINATED <-+  # remote process terminated
+//
+// When we receive a SIGTSTP we just ask outbash to suspend the Windows process.
+// Outbash acknowledges after it has suspended it. We then suspend ourselves;
+// there is no need for a "SUSPENDED" state in this program because that's just
+// when it is actually suspended by the OS...
+// When we resume execution, we just send a resume command and go back to work,
+// knowing that the Windows process will eventually get resumed. We delayed our
+// suspension to avoid e.g. the Windows process sending text on the console for
+// a few milliseconds after the WSL process is suspended and its suspension
+// acted upon (by the shell, for example). There is no equivalent situation
+// during the resume sequence, that's why no ack is needed for it.
+// In case of problem while sending the suspend or resume commands, we go to
+// the DYING state because the control socket is not supposed to fail.
+// However, that's just a send failure, and hopefully the exit code can still
+// get to us in the recv path. A transition occurs to TERMINATED when, from any
+// state, the exit code is received.
+// In the DYING and TERMINATED states, we still have to forward the remaining
+// redirected data and flush all the buffers before actually exiting.
+// In theory the stdout or stderr socket should not block anymore at this point,
+// except if somebody forwarded the redirection in a "background" process on the
+// Win32 side (however, note that Winsock seems to be unreliable in this case).
+// Anyway, for now we just forward as usual when DYING/TERMINATED, without
+// trying to do anything special, until all the work seems to be finished.
+//
+enum state_e { RUNNING, SUSPEND_PENDING, DYING, TERMINATED };
 
 int main(int argc, char *argv[])
 {
@@ -787,6 +827,21 @@ int main(int argc, char *argv[])
 
     signal(SIGPIPE, SIG_IGN);
 
+    sigset_t signal_mask;
+    sigemptyset(&signal_mask);
+    sigaddset(&signal_mask, SIGTSTP);
+    sigset_t orig_mask;
+    sigprocmask(SIG_BLOCK, &signal_mask, &orig_mask);
+    struct sigaction sa;
+    sigaction(SIGTSTP, NULL, &sa);
+    const bool ignore_sigtstp = (sa.sa_handler == SIG_IGN);
+    if (!ignore_sigtstp) {
+        sa.sa_handler = tstop_handler;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0;
+        sigaction(SIGTSTP, &sa, NULL);
+    }
+
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
@@ -847,8 +902,31 @@ int main(int argc, char *argv[])
                                || forwardable_stream(&fs[2]);
 
             struct timespec immediate = { 0, 0 };
-            int pselect_res = pselect(nfds, &rfds, &wfds, NULL, fwdable ? &immediate : NULL, NULL);
+            int pselect_res = pselect(nfds, &rfds, &wfds, NULL, fwdable ? &immediate : NULL, &orig_mask);
             int pselect_errno = errno;
+
+            if (tstop_req && state == RUNNING) {
+                int r = send_all(sock_ctrl, "suspend\n", strlen("suspend\n"), 0);
+                if (r < 0 && err_is_connection_broken(errno)) {
+                    // We will never be able to ask outbash to suspend the
+                    // Windows process, the expected reason is that it actually
+                    // has already terminated and we don't know yet about that,
+                    // so stop the suspend forwarding mechanism and suspend
+                    // ourselves immediately.
+                    shutdown(sock_ctrl, SHUT_WR); // also we can't send anything anymore // XXX to comment for WSL bug workaround? proba low here...
+                    signal(SIGTSTP, SIG_DFL);
+                    state = DYING;
+                    raise(SIGTSTP);
+                    sigprocmask(SIG_SETMASK, &orig_mask, NULL);
+                } else if (r < 0) { // other errors
+                    dprintf(STDERR_FILENO, "%s: send_all(\"suspend\\n\") failed: %s\n", tool_name, strerror(errno));
+                    abort();
+                } else { // OK
+                    // It's up to outbash now, just wait for its "suspend_ok"
+                    // answer after it has suspended the Windows process.
+                    state = SUSPEND_PENDING;
+                }
+            }
 
             if (pselect_res < 0 && pselect_errno == EINTR) {
                 // "On error, -1 is returned, and errno is set appropriately;
@@ -867,15 +945,55 @@ int main(int argc, char *argv[])
                     int nonblock_marker;
                     char *line = ctrl_readln(sock_ctrl, &nonblock_marker);
                     if (!line && nonblock_marker) break;
-                    else { // for now only exit codes
+                    if (line && !strcmp(line, "suspend_ok")) {
+                        if (state == SUSPEND_PENDING) {
+                            signal(SIGTSTP, SIG_DFL);
+                            raise(SIGTSTP);
+                            sigset_t previous_mask;
+                            sigprocmask(SIG_SETMASK, &orig_mask, &previous_mask);
+                                // >>> Process will Stop here, until SIGCONT <<<
+                            sigprocmask(SIG_SETMASK, &previous_mask, NULL);
+                            tstop_req = 0;
+                            int r = send_all(sock_ctrl, "resume\n", strlen("resume\n"), 0);
+                            if (r < 0 && err_is_connection_broken(errno)) {
+                                // killed when suspended (if this is possible?)
+                                // or maybe just before an attempt?
+                                shutdown(sock_ctrl, SHUT_WR); // XXX to comment for WSL bug workaround? proba low here...
+                                state = DYING;
+                                sigprocmask(SIG_SETMASK, &orig_mask, NULL);
+                            } else if (r < 0) {
+                                dprintf(STDERR_FILENO, "%s: send_all(\"resume\\n\") failed: %s\n", tool_name, strerror(errno));
+                                abort();
+                            } else {
+                                state = RUNNING;
+                                sa.sa_handler = tstop_handler;
+                                sigemptyset(&sa.sa_mask);
+                                sa.sa_flags = 0;
+                                sigaction(SIGTSTP, &sa, NULL);
+                            }
+                        } else {
+                            dprintf(STDERR_FILENO, "%s: spurious \"suspend_ok\" received\n", tool_name);
+                        }
+                    } else { // not "suspend_ok" => for now only other lines are exit codes
                         program_return_code = get_return_code(line);
                         shutdown(sock_ctrl, SHUT_RDWR);
+                        signal(SIGTSTP, ignore_sigtstp ? SIG_IGN : SIG_DFL);
                         // XXX: this is not ideal if the Win32 side managed to maintain the
                         // redirection socket beyond the lifetime of the launched process,
                         // however things seem to already be not reliable for Windows reasons
                         // in this case
                         forward_close_out(&fs[0], "stdin", false);
+                        if ((tstop_req && state == RUNNING) || state == SUSPEND_PENDING) {
+                            // We expect to stop soon, but not without flushing the OS TCP
+                            // buffers and our owns, and other WSL processes in a pipe might
+                            // already be suspended, so we better honor suspend requests ASAP.
+                            // XXX: do we really need to do that in case we already know there
+                            // will be no more output to flush?
+                            raise(SIGTSTP);
+                        }
+                        tstop_req = 0;
                         state = TERMINATED;
+                        sigprocmask(SIG_SETMASK, &orig_mask, NULL);
                         break;
                     }
                 }
