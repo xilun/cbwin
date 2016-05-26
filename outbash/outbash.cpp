@@ -45,6 +45,7 @@
 #include "env.h"
 #include "process.h"
 #include "win_except.h"
+#include "ntsuspend.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -488,7 +489,7 @@ private:
     }
 private:
     std::array<int, 3>              m_redirects;
-    std::array<CUniqueHandle, 3>     m_redir_connect_events;
+    std::array<CUniqueHandle, 3>    m_redir_connect_events;
     bool                            m_same_out_err_socket;
 };
 
@@ -643,16 +644,19 @@ private:
                 process_handle = CUniqueHandle(pi.hProcess);
             }
 
-            m_usock.change_event_select(ctrl_ev, FD_CLOSE | FD_READ);
+            m_usock.change_event_select(ctrl_ev, FD_CLOSE | FD_READ | FD_WRITE);
 
             bool try_get_line = true;
+            bool can_send = false;
             bool ctrl_socket_failed = false;
+            const char* to_send = nullptr;
             DWORD wr;
             do {
                 const bool ctrl_socket_was_ok = !ctrl_socket_failed;
 
                 HANDLE wait_handles[2] = { ctrl_ev.get_checked(), process_handle.get_checked() };
-                wr = ::WaitForMultipleObjects(2, &wait_handles[0], FALSE, try_get_line ? 0 : INFINITE);
+                const bool immediate_work = (try_get_line && !to_send) || (to_send && can_send);
+                wr = ::WaitForMultipleObjects(2, &wait_handles[0], FALSE, immediate_work ? 0 : INFINITE);
 
                 if (wr == WAIT_FAILED)
                     throw_last_error("WaitForMultipleObjects (run)"); // XXX not ideal
@@ -664,13 +668,15 @@ private:
 
                     if (ctrl_network_events.lNetworkEvents & FD_CLOSE)
                         ctrl_socket_failed = true;
+                    else if (ctrl_network_events.lNetworkEvents & FD_WRITE)
+                        can_send = true;
 
                     // if FD_READ, try_get_line will eventually be false
                     // (if not yet ctrl_socket_failed), and ::recv in buf_recv
                     // will re-enable FD_READ
                 }
 
-                if (try_get_line && !ctrl_socket_failed) {
+                if (try_get_line && !to_send && !ctrl_socket_failed) {
                     std::string line;
                     try {
                         try_get_line = buf_get_line(line);
@@ -681,15 +687,32 @@ private:
                     }
 
                     if (try_get_line) {
-                        // XXX: be mad about nul bytes?
-                        if (line == "suspend")
-                            std::fprintf(stderr, "\noutbash: XXX suspend\n");
-                        else if (line == "resume")
-                            std::fprintf(stderr, "\noutbash: XXX resume\n");
+                        // XXX: be mad about nul bytes and/or unknown commands?
+                        if (line == "suspend") {
+                            NT_Suspend(process_handle.get_checked());
+                            // XXX we should maybe handle NT_Suspend() failures and propagate them
+                            to_send = "suspend_ok\n";
+                        } else if (line == "resume") {
+                            NT_Resume(process_handle.get_checked());
+                        }
                     }
                 }
 
-                if (!try_get_line && !ctrl_socket_failed) {
+                if (to_send && can_send && !ctrl_socket_failed) {
+                    int len = (int)std::strlen(to_send);
+                    int res = ::send(m_usock.get(), to_send, len, 0);
+                    if (res < 0) {
+                        if (::GetLastError() == WSAEWOULDBLOCK) {
+                            can_send = false;
+                        } else {
+                            throw_last_error("send"); // XXX not ideal
+                        }
+                    } else {
+                        to_send = len > res ? to_send + res : nullptr;
+                    }
+                }
+
+                if (!try_get_line && !to_send && !ctrl_socket_failed) {
                     int r = buf_recv();
                     if (r < 0) {
                         if (WSAGetLastError() != WSAEWOULDBLOCK)
@@ -701,6 +724,7 @@ private:
 
                 if (ctrl_socket_failed) {
                     try_get_line = false;
+                    can_send = false;
                     if (ctrl_socket_was_ok) {
                         m_usock.change_event_select(ctrl_ev, FD_CLOSE);
                         ::TerminateProcess(process_handle.get_unchecked(), 0xC0000001);
@@ -814,6 +838,11 @@ int main()
 {
     init_locale_console_cp();
     if (init_winsock() != 0) std::exit(EXIT_FAILURE);
+    if (!ImportNtProcess()) {
+        Win32_perror("outbash: ImportNtProcess");
+        std::fprintf(stderr, "outbash: could not import Nt suspend/resume process functions\n");
+        std::exit(EXIT_FAILURE);
+    }
 
     CUniqueSocket sock(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 

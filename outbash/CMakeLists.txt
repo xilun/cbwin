@@ -11,6 +11,8 @@ add_executable(outbash
                process.cpp
                win_except.h
                win_except.cpp
+               ntsuspend.h
+               ntsuspend.cpp
                outbash.cpp
                outbash.rc)
 
