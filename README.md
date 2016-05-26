@@ -113,6 +113,12 @@ directory, otherwise it would have failed). Win32 also has no equivalent of `exe
 update a running `outbash.exe` anyway.
 
 # warnings
+For now running *interactive* Win32 console tools in the same console as a WSL bash session (for example: `wrun cmd`
+or `wcmd python`) does not work well. The main problems seem to be related to the console switching internal modes
+(charset, but not only) between the Win32 and the WSL world. I don't know yet if something nice enough to use in that
+regard can be achieved without some changes from MS about how their stuff works. (This might be somehow related to WSL
+not working well, for now, with ConEmu or Bitvise SSH Server - but I'm not really sure about that)
+
 Anybody with access to TCP 127.0.0.1 can launch anything with the privileges of the user who launched `outbash.exe`.
 This might not be an issue if you are the only user of your computer. This might however break the WSL security model
 (once it is properly implemented by MS), but if you are only using separation between the WSL root and user to avoid
