@@ -11,7 +11,8 @@ add_executable(outbash
                process.cpp
                win_except.h
                win_except.cpp
-               outbash.cpp)
+               outbash.cpp
+               outbash.rc)
 
 add_definitions(/D_UNICODE /DUNICODE)
 
