@@ -641,17 +641,21 @@ private:
             }
 
             ::CloseHandle(pi.hThread);
+            // XXX: transform pi.hProcess to something exception safe
 
-            m_usock.change_event_select(ctrl_ev, FD_CLOSE | FD_READ);
+            m_usock.change_event_select(ctrl_ev, FD_CLOSE | FD_READ | FD_WRITE);
 
             bool try_get_line = true;
+            bool can_send = false;
             bool ctrl_socket_failed = false;
+            const char* to_send = nullptr;
             DWORD wr;
             do {
                 const bool ctrl_socket_was_ok = !ctrl_socket_failed;
 
                 HANDLE wait_handles[2] = { ctrl_ev.get_unchecked(), pi.hProcess };
-                wr = ::WaitForMultipleObjects(2, &wait_handles[0], FALSE, try_get_line ? 0 : INFINITE);
+                const bool immediate_work = (try_get_line && !to_send) || (to_send && can_send);
+                wr = ::WaitForMultipleObjects(2, &wait_handles[0], FALSE, immediate_work ? 0 : INFINITE);
 
                 if (wr == WAIT_FAILED) {
                     ::CloseHandle(pi.hProcess);
@@ -660,18 +664,22 @@ private:
 
                 if (wr == WAIT_OBJECT_0) {
                     WSANETWORKEVENTS ctrl_network_events;
-                    if (SOCKET_ERROR == ::WSAEnumNetworkEvents(m_usock.get(), wait_handles[0], &ctrl_network_events))
+                    if (SOCKET_ERROR == ::WSAEnumNetworkEvents(m_usock.get(), wait_handles[0], &ctrl_network_events)) {
+                        ::CloseHandle(pi.hProcess);
                         throw_last_error("WSAEnumNetworkEvents"); // XXX not ideal
+                    }
 
                     if (ctrl_network_events.lNetworkEvents & FD_CLOSE)
                         ctrl_socket_failed = true;
+                    else if (ctrl_network_events.lNetworkEvents & FD_WRITE)
+                        can_send = true;
 
                     // if FD_READ, try_get_line will eventually be false
                     // (if not yet ctrl_socket_failed), and ::recv in buf_recv
                     // will re-enable FD_READ
                 }
 
-                if (try_get_line && !ctrl_socket_failed) {
+                if (try_get_line && !to_send && !ctrl_socket_failed) {
                     std::string line;
                     try {
                         try_get_line = buf_get_line(line);
@@ -682,22 +690,39 @@ private:
                     }
 
                     if (try_get_line) {
-                        // XXX: be mad about nul bytes?
+                        // XXX: be mad about nul bytes and/or unknown commands?
                         if (line == "suspend") {
-                            // BUG: m_usock is non-blocking...
                             NT_Suspend(pi.hProcess);
-                            send_all(m_usock.get(), "suspend_ok\n", std::strlen("suspend_ok\n"), 0);
+                            // XXX we should maybe handle NT_Suspend() failures and propagate them
+                            to_send = "suspend_ok\n";
                         } else if (line == "resume") {
                             NT_Resume(pi.hProcess);
                         }
                     }
                 }
 
-                if (!try_get_line && !ctrl_socket_failed) {
+                if (to_send && can_send && !ctrl_socket_failed) {
+                    int len = (int)std::strlen(to_send);
+                    int res = ::send(m_usock.get(), to_send, len, 0);
+                    if (res < 0) {
+                        if (::GetLastError() == WSAEWOULDBLOCK) {
+                            can_send = false;
+                        } else {
+                            ::CloseHandle(pi.hProcess);
+                            throw_last_error("send"); // XXX not ideal
+                        }
+                    } else {
+                        to_send = len > res ? to_send + res : nullptr;
+                    }
+                }
+
+                if (!try_get_line && !to_send && !ctrl_socket_failed) {
                     int r = buf_recv();
                     if (r < 0) {
-                        if (WSAGetLastError() != WSAEWOULDBLOCK)
+                        if (WSAGetLastError() != WSAEWOULDBLOCK) {
+                            ::CloseHandle(pi.hProcess);
                             throw_last_error("buf_recv"); // XXX not ideal
+                        }
                     } else {
                         try_get_line = !!r;
                     }
@@ -705,6 +730,7 @@ private:
 
                 if (ctrl_socket_failed) {
                     try_get_line = false;
+                    can_send = false;
                     if (ctrl_socket_was_ok) {
                         m_usock.change_event_select(ctrl_ev, FD_CLOSE);
                         ::TerminateProcess(pi.hProcess, 0xC0000001);

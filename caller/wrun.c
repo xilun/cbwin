@@ -642,7 +642,7 @@ static void forward_stream(struct forward_state *fs, const char *stream_name)
 static void fs_init_accept_as_needed(struct forward_state *fs, struct listening_socket *lsock, bool own_redir, int std_fileno)
 {
     if (own_redir) {
-        fd_set_nonblock(std_fileno);
+        fd_set_nonblock(std_fileno);    // BUG: should be set back to blocking when dprintf'ing...
         int sock = accept_and_close_listener(lsock);
         if (std_fileno == STDIN_FILENO) {
             // shutdown(sock, SHUT_RD);
