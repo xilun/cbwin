@@ -302,6 +302,21 @@ static void fd_set_nonblock(int fd)
         dprintf(STDERR_FILENO, "%s: fcntl(%d, F_SETFL, flags | O_NONBLOCK) failed: %s\n", tool_name, fd, strerror(errno));
         abort();
     }
+
+    // BUG: hm Posix makes no sense; O_NONBLOCK is a file descripTION property,
+    // that means might even be shared with other processes.
+    // So we should not touch it for std fds...
+    //
+    // However, how are we supposed to do our work then?
+    // Redirection to a WSL socket could be special cased with send(..., MSG_DONTWAIT) syscalls
+    // But not the more common case: redirection to a pipe
+    //
+    // If we tolerate inefficiencies, https://cr.yp.to/unix/nonblock.html describes
+    // a potential (but crazy) solution: setup a timer before the syscall.
+    //
+    // Maybe I should just launch a few threads...? Or stay incorrect?
+    // Bugs due to that shitty Posix design are quickly triggered when playing
+    // with Ctrl-Z, though.
 }
 
 // precondition: fd_1 and fd_2 must not be bad
