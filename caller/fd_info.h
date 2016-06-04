@@ -51,7 +51,11 @@ struct fd_info_struct {
     bool redirect;
 };
 
+void fd_info_global_init(void);
 void fd_info_init(struct fd_info_struct *info, int fd, bool inherited);
 void fd_info_setup_nonblock(struct fd_info_struct *info);
+void fd_info_virtual_close_fd(struct fd_info_struct *info);
 ssize_t fd_info_nonblock_read(struct fd_info_struct *info, void *buf, size_t count);
 ssize_t fd_info_nonblock_write(struct fd_info_struct *info, const void *buf, size_t count);
+
+void fd_info_global_dump_stats(void);

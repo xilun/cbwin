@@ -30,6 +30,8 @@
 #include <limits.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 
@@ -38,7 +40,7 @@
 
 /**********************************************************************/
 
-///
+//////////////////// SOCKET
 static ssize_t socket_nonblock_read(int fd, void *buf, size_t count)
 {
     return recv(fd, buf, count, MSG_DONTWAIT);
@@ -49,7 +51,7 @@ static ssize_t socket_nonblock_write(int fd, const void *buf, size_t count)
     return send(fd, buf, count, MSG_DONTWAIT);
 }
 
-///
+//////////////////// BADF
 static ssize_t fake_read_badf(int fd, void *buf, size_t count)
 {
     (void)fd; (void)buf; (void)count;
@@ -66,18 +68,120 @@ static ssize_t fake_write_badf(int fd, const void *buf, size_t count)
     return count;
 }
 
-///
+//////////////////// NONBLOCK'ish SIMULATION WITH A TIMER
+#define INITIAL_NONBLOCK_TIMER  50000
+volatile sig_atomic_t first_alarm;
+
+static long long usecs;
+static long long max_usecs;
+static int alarm_count;
+static int nb_eintr;
+static int nb_rw;
+
+static void alarm_handler(int signum)
+{
+    (void)signum;
+
+    static struct itimerval backoff_timer = {{0,0},{0,INITIAL_NONBLOCK_TIMER}};
+
+    if (first_alarm) {
+        usecs = INITIAL_NONBLOCK_TIMER;
+        first_alarm = false;
+    }
+
+    // stats:
+    if (usecs > max_usecs)
+        max_usecs = usecs;
+    alarm_count++;
+
+    // exponential backoff:
+    usecs *= 2;
+    if (usecs > 60000000)
+        usecs = 60000000; // 1 min
+
+    backoff_timer.it_value.tv_sec = usecs / 1000000;
+    backoff_timer.it_value.tv_usec = usecs % 1000000;
+    setitimer(ITIMER_REAL, &backoff_timer, NULL);
+}
+
+// precondition: SIGALRM ignored, timer is disarmed
+static void setup_alarm_handler(void)
+{
+    first_alarm = true;
+
+    struct sigaction sa;
+    sa.sa_handler = alarm_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGALRM, &sa, NULL);
+
+    static const struct itimerval it = {{0,0},{0,INITIAL_NONBLOCK_TIMER}};
+    setitimer(ITIMER_REAL, &it, NULL);
+}
+
+static void disarm_alarm(void)
+{
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGALRM);
+    sigprocmask(SIG_BLOCK, &set, NULL);
+    static const struct itimerval it_disarm = {{0,0},{0,0}};
+    setitimer(ITIMER_REAL, &it_disarm, NULL);
+    signal(SIGALRM, SIG_IGN);
+    sigprocmask(SIG_UNBLOCK, &set, NULL);
+}
+
 static ssize_t timer_nonblock_read(int fd, void *buf, size_t count)
 {
-    return read(fd, buf, count); // BUG
+    setup_alarm_handler();
+    //
+        nb_rw++;
+        ssize_t result = read(fd, buf, count);
+        int save_errno = errno;
+        if (result < 0 && save_errno == EINTR) {
+            nb_eintr++;
+            save_errno = EAGAIN;
+        }
+    //
+    disarm_alarm();
+
+    errno = save_errno;
+    return result;
 }
 
 static ssize_t timer_nonblock_write(int fd, const void *buf, size_t count)
 {
-    return write(fd, buf, count); // BUG
+    setup_alarm_handler();
+    //
+        nb_rw++;
+        ssize_t result = write(fd, buf, count);
+        int save_errno = errno;
+        if (result < 0 && save_errno == EINTR) {
+            nb_eintr++;
+            save_errno = EAGAIN;
+        }
+    //
+    disarm_alarm();
+
+    errno = save_errno;
+    return result;
 }
 
 /**********************************************************************/
+
+void fd_info_global_init(void)
+{
+    signal(SIGALRM, SIG_IGN);
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGALRM);
+    sigprocmask(SIG_UNBLOCK, &set, NULL);
+}
+
+void fd_info_global_dump_stats(void)
+{
+    fprintf(stderr, "max usecs=%lld count=%d nb_eintr=%d nb_rw=%d\n", max_usecs, alarm_count, nb_eintr, nb_rw);
+}
 
 void fd_info_init(struct fd_info_struct *info, int fd, bool inherited)
 {
@@ -155,4 +259,13 @@ ssize_t fd_info_nonblock_read(struct fd_info_struct *info, void *buf, size_t cou
 ssize_t fd_info_nonblock_write(struct fd_info_struct *info, const void *buf, size_t count)
 {
     return info->nonblock_write(info->fd, buf, count);
+}
+
+void fd_info_virtual_close_fd(struct fd_info_struct *info)
+{
+    if (info->fd >= 0) {
+        if (info->fd != 2)  // keep stderr open for our own messages
+            close(info->fd);
+        info->fd = -1;
+    }
 }

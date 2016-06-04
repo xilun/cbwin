@@ -505,10 +505,8 @@ static void forward_close_in(struct forward_state *fs)
 {
     fs->ready_in = false;
     fs->dead_in = true;
-    if (fs->fd_info_in) {
-        close(fs->fd_info_in->fd);
-        fs->fd_info_in->fd = -1;
-    }
+    if (fs->fd_info_in)
+        fd_info_virtual_close_fd(fs->fd_info_in);
 }
 
 static void forward_close_out(struct forward_state *fs, const char *stream_name, bool error)
@@ -520,12 +518,10 @@ static void forward_close_out(struct forward_state *fs, const char *stream_name,
             if (fs->fd_info_out && shutdown(fs->fd_info_out->fd, SHUT_WR)) {
                 dprintf(STDERR_FILENO, "%s: %s: will close(%d) because of shutdown(%d, SHUT_WR) error: %s\n",
                                        tool_name, stream_name, fs->fd_info_out->fd, fs->fd_info_out->fd, strerror(errno));
-                close(fs->fd_info_out->fd);
-                fs->fd_info_out->fd = -1;
+                fd_info_virtual_close_fd(fs->fd_info_out);
             }
         } else if (fs->fd_info_out) {
-            close(fs->fd_info_out->fd);
-            fs->fd_info_out->fd = -1;
+            fd_info_virtual_close_fd(fs->fd_info_out);
         }
     }
 }
@@ -556,6 +552,12 @@ static void forward_stream(struct forward_state *fs, const char *stream_name)
             forward_close_in(fs);
         } else { // res > 0
             fs->buf.fill += res;
+            /*
+            Signaling of end of stream seems to not yet be reliable yet under WSL, so
+            we can't really block on pselect in this case for now:
+            if (fs->buf.fill < FORWARD_BUFFER_SIZE)
+                fs->ready_in = false;
+            */
         }
     }
 
@@ -576,6 +578,8 @@ static void forward_stream(struct forward_state *fs, const char *stream_name)
         } else {
             fs->buf.fill -= res;
             memmove(fs->buf.buffer, fs->buf.buffer + res, fs->buf.fill);
+            if (fs->buf.fill)
+                fs->ready_out = false;
         }
     }
 
@@ -657,6 +661,8 @@ int main(int argc, char *argv[])
         terminate_nocore();
     }
     int tool = get_tool(argv[0]);
+
+    fd_info_global_init();
 
     fd_info_init(&std_fd_info[STDIN_FILENO],  STDIN_FILENO,  true);
     fd_info_init(&std_fd_info[STDOUT_FILENO], STDOUT_FILENO, true);
@@ -964,5 +970,6 @@ int main(int argc, char *argv[])
         forward_stream(&fs[2], "stderr");
     }
 
+    fd_info_global_dump_stats();
     return program_return_code;
 }
