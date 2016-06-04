@@ -39,6 +39,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
+#include "wrun.h"
+#include "fd_info.h"
+
 #define MY_DYNAMIC_PATH_MAX (32768*3 + 32)
 #define MNT_DRIVE_FS_PREFIX "/mnt/"
 
@@ -49,7 +52,7 @@ enum tool_e
     TOOL_WSTART
 };
 
-static const char* tool_name;
+const char* tool_name = NULL;
 
 static void output_err(const char* s)
 {
@@ -238,86 +241,7 @@ static void check_argc(int argc)
     }
 }
 
-struct std_fd_info_struct {
-
-    /* identity: */
-    int fd;
-    bool is_bad;
-    bool is_dev_null;
-    bool is_a_tty;
-    bool is_socket;
-    struct stat stbuf;
-
-    /* policy: */
-    bool redirect;
-};
-
-static struct std_fd_info_struct std_fd_info[3];
-
-static void fill_std_fd_info_identity(int fd)
-{
-    assert(fd >= 0);
-    assert(fd < 3);
-    struct std_fd_info_struct *info = &std_fd_info[fd];
-
-    info->fd = fd;
-
-    int r = fstat(info->fd, &info->stbuf);
-    if (r != 0) {
-        if (errno == EBADF) {
-            info->is_bad = true;
-            return;
-        } else {
-            dprintf(STDERR_FILENO, "%s: fstat(%d, &st) failed: %s\n", tool_name, fd, strerror(errno));
-            abort();
-        }
-    }
-
-    // under Linux, the major and minor of /dev/null is fixed:
-    if (S_ISCHR(info->stbuf.st_mode) && major(info->stbuf.st_rdev) == 1
-                                     && minor(info->stbuf.st_rdev) == 3) {
-        info->is_dev_null = true;
-        return;
-    }
-
-    if (isatty(info->fd)) {
-        info->is_a_tty = true;
-        return;
-    }
-
-    if (S_ISSOCK(info->stbuf.st_mode)) {
-        info->is_socket = true;
-        return;
-    }
-}
-
-static void fd_set_nonblock(int fd)
-{
-    int flags = fcntl(fd, F_GETFL);
-    if (flags < 0) {
-        dprintf(STDERR_FILENO, "%s: fcntl(%d, F_GETFL) failed: %s\n", tool_name, fd, strerror(errno));
-        abort();
-    }
-    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-        dprintf(STDERR_FILENO, "%s: fcntl(%d, F_SETFL, flags | O_NONBLOCK) failed: %s\n", tool_name, fd, strerror(errno));
-        abort();
-    }
-
-    // BUG: hm Posix makes no sense; O_NONBLOCK is a file descripTION property,
-    // that means might even be shared with other processes.
-    // So we should not touch it for std fds...
-    //
-    // However, how are we supposed to do our work then?
-    // Redirection to a WSL socket could be special cased with send(..., MSG_DONTWAIT) syscalls
-    // But not the more common case: redirection to a pipe
-    //
-    // If we tolerate inefficiencies, https://cr.yp.to/unix/nonblock.html describes
-    // a potential (but crazy) solution: setup a timer before the syscall.
-    //
-    // Maybe I should just launch a few threads...? Or stay incorrect?
-    // Bugs due to that shitty Posix design are quickly triggered when playing
-    // with Ctrl-Z, though.
-}
+static struct fd_info_struct std_fd_info[3];
 
 // precondition: fd_1 and fd_2 must not be bad
 static bool are_stdfd_to_same_thing(int fd_1, int fd_2)
@@ -413,7 +337,7 @@ struct listening_socket socket_listen_one_loopback()
     return lsock;
 }
 
-int accept_and_close_listener(struct listening_socket *lsock)
+struct fd_info_struct *accept_and_close_listener(struct listening_socket *lsock)
 {
     struct sockaddr_in client_addr;
     memset(&client_addr, 0, sizeof(client_addr));
@@ -430,8 +354,10 @@ int accept_and_close_listener(struct listening_socket *lsock)
     close(lsock->sockfd);
     lsock->sockfd = -1;
 
-    fd_set_nonblock(sock);
-    return sock;
+    struct fd_info_struct *fd_info = xmalloc(sizeof (struct fd_info_struct));
+    fd_info_init(fd_info, sock, false);
+    fd_info_setup_nonblock(fd_info);
+    return fd_info;
 }
 
 #define CTRL_IN_BUFFER_SIZE 128
@@ -504,8 +430,8 @@ struct forward_buffer
 
 struct forward_state
 {
-    int fd_in;
-    int fd_out;
+    struct fd_info_struct *fd_info_in;
+    struct fd_info_struct *fd_info_out;
     bool issock_in;
     bool issock_out;
     bool ready_in;
@@ -518,10 +444,13 @@ struct forward_state
 #define FORWARD_STATE_IN_IS_SOCKET  1
 #define FORWARD_STATE_OUT_IS_SOCKET 2
 
-static void forward_state_init(struct forward_state *fs, int fd_in, int fd_out, int flags)
+static void forward_state_init(struct forward_state *fs,
+                               struct fd_info_struct *fd_info_in,
+                               struct fd_info_struct *fd_info_out,
+                               int flags)
 {
-    fs->fd_in = fd_in;
-    fs->fd_out = fd_out;
+    fs->fd_info_in = fd_info_in;
+    fs->fd_info_out = fd_info_out;
     fs->issock_in = (flags & FORWARD_STATE_IN_IS_SOCKET);
     fs->issock_out = (flags & FORWARD_STATE_OUT_IS_SOCKET);
     fs->ready_in = false;
@@ -534,8 +463,8 @@ static void forward_state_init(struct forward_state *fs, int fd_in, int fd_out, 
 
 static void forward_state_down(struct forward_state *fs)
 {
-    fs->fd_in = -1;
-    fs->fd_out = -1;
+    fs->fd_info_in = NULL;
+    fs->fd_info_out = NULL;
     fs->issock_in = false;
     fs->issock_out = false;
     fs->ready_in = false;
@@ -576,8 +505,10 @@ static void forward_close_in(struct forward_state *fs)
 {
     fs->ready_in = false;
     fs->dead_in = true;
-    close(fs->fd_in);
-    fs->fd_in = -1;
+    if (fs->fd_info_in) {
+        close(fs->fd_info_in->fd);
+        fs->fd_info_in->fd = -1;
+    }
 }
 
 static void forward_close_out(struct forward_state *fs, const char *stream_name, bool error)
@@ -586,15 +517,15 @@ static void forward_close_out(struct forward_state *fs, const char *stream_name,
         fs->ready_out = false;
         fs->dead_out = true;
         if (fs->issock_out && !error) {
-            if (shutdown(fs->fd_out, SHUT_WR)) {
+            if (fs->fd_info_out && shutdown(fs->fd_info_out->fd, SHUT_WR)) {
                 dprintf(STDERR_FILENO, "%s: %s: will close(%d) because of shutdown(%d, SHUT_WR) error: %s\n",
-                                       tool_name, stream_name, fs->fd_out, fs->fd_out, strerror(errno));
-                close(fs->fd_out);
-                fs->fd_out = -1;
+                                       tool_name, stream_name, fs->fd_info_out->fd, fs->fd_info_out->fd, strerror(errno));
+                close(fs->fd_info_out->fd);
+                fs->fd_info_out->fd = -1;
             }
-        } else {
-            close(fs->fd_out);
-            fs->fd_out = -1;
+        } else if (fs->fd_info_out) {
+            close(fs->fd_info_out->fd);
+            fs->fd_info_out->fd = -1;
         }
     }
 }
@@ -609,8 +540,8 @@ static void forward_stream(struct forward_state *fs, const char *stream_name)
     if (fs->ready_in && fs->buf.fill < FORWARD_BUFFER_SIZE) {
         ssize_t res;
         do {
-            res = read(fs->fd_in, fs->buf.buffer + fs->buf.fill,
-                                  FORWARD_BUFFER_SIZE - fs->buf.fill);
+            res = fd_info_nonblock_read(fs->fd_info_in, fs->buf.buffer + fs->buf.fill,
+                                        FORWARD_BUFFER_SIZE - fs->buf.fill);
         } while (res < 0 && errno == EINTR);
         if (res < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -631,7 +562,7 @@ static void forward_stream(struct forward_state *fs, const char *stream_name)
     if (fs->ready_out && fs->buf.fill > 0) {
         ssize_t res;
         do {
-            res = write(fs->fd_out, fs->buf.buffer, fs->buf.fill);
+            res = fd_info_nonblock_write(fs->fd_info_out, fs->buf.buffer, fs->buf.fill);
         } while (res < 0 && errno == EINTR);
         if (res < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -657,20 +588,20 @@ static void forward_stream(struct forward_state *fs, const char *stream_name)
 static void fs_init_accept_as_needed(struct forward_state *fs, struct listening_socket *lsock, bool own_redir, int std_fileno)
 {
     if (own_redir) {
-        fd_set_nonblock(std_fileno);    // BUG: should be set back to blocking when dprintf'ing...
-        int sock = accept_and_close_listener(lsock);
+        struct fd_info_struct *sock_info = accept_and_close_listener(lsock);
+        fd_info_setup_nonblock(&std_fd_info[std_fileno]);
         if (std_fileno == STDIN_FILENO) {
-            // shutdown(sock, SHUT_RD);
+            // shutdown(sock_info->fd, SHUT_RD);
             int flags = FORWARD_STATE_OUT_IS_SOCKET;
             if (std_fd_info[std_fileno].is_socket)
                 flags |= FORWARD_STATE_IN_IS_SOCKET;
-            forward_state_init(fs, std_fileno, sock, flags);
+            forward_state_init(fs, &std_fd_info[std_fileno], sock_info, flags);
         } else { // STDOUT_FILENO or STDERR_FILENO
-            // shutdown(sock, SHUT_WR);
+            // shutdown(sock_info->fd, SHUT_WR);
             int flags = FORWARD_STATE_IN_IS_SOCKET;
             if (std_fd_info[std_fileno].is_socket)
                 flags |= FORWARD_STATE_OUT_IS_SOCKET;
-            forward_state_init(fs, sock, std_fileno, flags);
+            forward_state_init(fs, sock_info, &std_fd_info[std_fileno], flags);
         }
     } else {
         forward_state_down(fs);
@@ -727,9 +658,9 @@ int main(int argc, char *argv[])
     }
     int tool = get_tool(argv[0]);
 
-    fill_std_fd_info_identity(STDIN_FILENO);
-    fill_std_fd_info_identity(STDOUT_FILENO);
-    fill_std_fd_info_identity(STDERR_FILENO);
+    fd_info_init(&std_fd_info[STDIN_FILENO],  STDIN_FILENO,  true);
+    fd_info_init(&std_fd_info[STDOUT_FILENO], STDOUT_FILENO, true);
+    fd_info_init(&std_fd_info[STDERR_FILENO], STDERR_FILENO, true);
 
     char* cwd = agetcwd();
     if (!((strncmp(cwd, MNT_DRIVE_FS_PREFIX, strlen(MNT_DRIVE_FS_PREFIX)) == 0)
@@ -887,8 +818,8 @@ int main(int argc, char *argv[])
 #define MY_MAX(x, y) (((x) > (y)) ? (x) : (y))
     int nfds = 0;
     for (int i = 0; i < 3; i++) {
-        nfds = MY_MAX(nfds, fs[i].fd_in);
-        nfds = MY_MAX(nfds, fs[i].fd_out);
+        if (fs[i].fd_info_in)   nfds = MY_MAX(nfds, fs[i].fd_info_in->fd);
+        if (fs[i].fd_info_out)  nfds = MY_MAX(nfds, fs[i].fd_info_out->fd);
     }
     nfds = MY_MAX(nfds, sock_ctrl);
     nfds++;
@@ -901,8 +832,16 @@ int main(int argc, char *argv[])
         int nblive = 0, nbpull = 0;
         for (int i = 0; i < 3; i++) {
             nblive += (!fs[i].dead_in) + (!fs[i].dead_out);
-            if (!fs[i].dead_in  && !fs[i].ready_in)  { assert(fs[i].fd_in >= 0);  nbpull++; FD_SET(fs[i].fd_in,  &rfds); }
-            if (!fs[i].dead_out && !fs[i].ready_out) { assert(fs[i].fd_out >= 0); nbpull++; FD_SET(fs[i].fd_out, &wfds); }
+
+            if (!fs[i].dead_in  && !fs[i].ready_in)  {
+                assert(fs[i].fd_info_in && fs[i].fd_info_in->fd >= 0);
+                nbpull++; FD_SET(fs[i].fd_info_in->fd, &rfds);
+            }
+
+            if (!fs[i].dead_out && !fs[i].ready_out) {
+                assert(fs[i].fd_info_out && fs[i].fd_info_out->fd >= 0);
+                nbpull++; FD_SET(fs[i].fd_info_out->fd, &wfds);
+            }
         }
         if (state != TERMINATED) {
             nbpull++; FD_SET(sock_ctrl, &rfds);
@@ -1015,8 +954,8 @@ int main(int argc, char *argv[])
             }
 
             for (int i = 0; i < 3; i++) {
-                if (!fs[i].dead_in  && FD_ISSET(fs[i].fd_in,  &rfds)) fs[i].ready_in  = true;
-                if (!fs[i].dead_out && FD_ISSET(fs[i].fd_out, &wfds)) fs[i].ready_out = true;
+                if (!fs[i].dead_in  && FD_ISSET(fs[i].fd_info_in->fd,  &rfds)) fs[i].ready_in  = true;
+                if (!fs[i].dead_out && FD_ISSET(fs[i].fd_info_out->fd, &wfds)) fs[i].ready_out = true;
             }
         }
 
