@@ -250,46 +250,46 @@ ssize_t send_all(const SOCKET sockfd, const void *buffer, const size_t length, c
     return (ssize_t)where;
 }
 
-class CUniqueEvent
+class CUniqueHandle
 {
 public:
-    CUniqueEvent() noexcept : m_event(NULL) {}
-    explicit CUniqueEvent(HANDLE event) noexcept : m_event(event) {}
-    CUniqueEvent(const CUniqueEvent&) = delete;
-    CUniqueEvent& operator=(const CUniqueEvent&) = delete;
-    CUniqueEvent(CUniqueEvent&& other) noexcept : m_event(other.m_event) { other.m_event = NULL; }
-    CUniqueEvent& operator=(CUniqueEvent&& other) noexcept
+    CUniqueHandle() noexcept : m_handle(NULL) {}
+    explicit CUniqueHandle(HANDLE event) noexcept : m_handle(event) {}
+    CUniqueHandle(const CUniqueHandle&) = delete;
+    CUniqueHandle& operator=(const CUniqueHandle&) = delete;
+    CUniqueHandle(CUniqueHandle&& other) noexcept : m_handle(other.m_handle) { other.m_handle = NULL; }
+    CUniqueHandle& operator=(CUniqueHandle&& other) noexcept
     {
         if (this != &other) {
-            if (is_valid()) ::CloseHandle(m_event);
-            m_event = other.m_event;
-            other.m_event = NULL;
+            if (is_valid()) ::CloseHandle(m_handle);
+            m_handle = other.m_handle;
+            other.m_handle = NULL;
         }
         return *this;
     }
-    ~CUniqueEvent() noexcept { if (is_valid()) ::CloseHandle(m_event); }
+    ~CUniqueHandle() noexcept { if (is_valid()) ::CloseHandle(m_handle); }
     void close() noexcept
     {
         if (is_valid()) {
-            ::CloseHandle(m_event);
-            m_event = NULL;
+            ::CloseHandle(m_handle);
+            m_handle = NULL;
         }
     }
     HANDLE get_checked() const
     {
         if (!is_valid()) {
             ::SetLastError(ERROR_INVALID_HANDLE);
-            throw_last_error("CUniqueEvent::get_checked");
+            throw_last_error("CUniqueHandle::get_checked");
         }
-        return m_event;
+        return m_handle;
     }
-    HANDLE get_unchecked() const noexcept { return m_event; }
+    HANDLE get_unchecked() const noexcept { return m_handle; }
     bool is_valid() const noexcept
     {
-        return m_event != NULL && m_event != INVALID_HANDLE_VALUE;
+        return m_handle != NULL && m_handle != INVALID_HANDLE_VALUE;
     }
 private:
-    HANDLE m_event;
+    HANDLE m_handle;
 };
 
 class CUniqueSocket
@@ -320,7 +320,7 @@ public:
 
     SOCKET release() noexcept { SOCKET ret = m_socket; m_socket = INVALID_SOCKET; return ret; }
 
-    CUniqueEvent create_auto_event(long net_evts)
+    CUniqueHandle create_auto_event(long net_evts)
     {
         HANDLE ev = ::CreateEvent(NULL, FALSE, FALSE, NULL);
         if (ev == NULL) throw_last_error("CreateEvent");
@@ -329,10 +329,10 @@ public:
             ::CloseHandle(ev);
             throw_system_error("WSAEventSelect (create_auto_event)", syserr);
         }
-        return CUniqueEvent(ev);
+        return CUniqueHandle(ev);
     }
 
-    CUniqueEvent create_manual_event(long net_evts)
+    CUniqueHandle create_manual_event(long net_evts)
     {
         HANDLE ev = ::WSACreateEvent();
         if (ev == WSA_INVALID_EVENT) throw_last_error("WSACreateEvent");
@@ -341,10 +341,10 @@ public:
             ::CloseHandle(ev);
             throw_system_error("WSAEventSelect (create_manual_event)", syserr);
         }
-        return CUniqueEvent(ev);
+        return CUniqueHandle(ev);
     }
 
-    void change_event_select(CUniqueEvent& ev, long net_evts)
+    void change_event_select(CUniqueHandle& ev, long net_evts)
     {
         if (SOCKET_ERROR == ::WSAEventSelect(m_socket, ev.get_unchecked(), net_evts))
             throw_last_error("WSAEventSelect (change_event_select)");
@@ -424,7 +424,7 @@ public:
                     set_same_as_other(REDIR_STDERR, REDIR_STDOUT);
                 } else {
                     CUniqueSocket sock(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-                    CUniqueEvent conn_ev = sock.create_auto_event(FD_CONNECT);
+                    CUniqueHandle conn_ev = sock.create_auto_event(FD_CONNECT);
                     struct sockaddr_in redir_addr;
                     std::memset(&redir_addr, 0, sizeof(redir_addr));
                     redir_addr.sin_family = AF_INET;
@@ -447,8 +447,8 @@ public:
     }
 
     // Complete connections to redirection sockets before the controlling socket
-    // closed, or throw an exception.
-    void complete_connections(CUniqueEvent& ctrl_close_ev)
+    // closes (too early), or throw an exception.
+    void complete_connections(CUniqueHandle& ctrl_close_ev)
     {
         std::array<HANDLE, 4> wait_handles;
         while (1)
@@ -488,7 +488,7 @@ private:
     }
 private:
     std::array<int, 3>              m_redirects;
-    std::array<CUniqueEvent, 3>     m_redir_connect_events;
+    std::array<CUniqueHandle, 3>     m_redir_connect_events;
     bool                            m_same_out_err_socket;
 };
 
@@ -591,12 +591,13 @@ private:
 
         void run()
         {
-            PROCESS_INFORMATION pi;
+            CUniqueHandle process_handle;
             std::unique_ptr<OutbashStdRedirects> redir(nullptr);
-            CUniqueEvent ctrl_ev;
+            CUniqueHandle ctrl_ev;
 
             // scope for locals lifetime:
             {
+                PROCESS_INFORMATION pi;
                 std::wstring wrun;
                 std::wstring wcd;
                 std::unique_ptr<EnvVars> vars(nullptr);
@@ -637,9 +638,10 @@ private:
 
                 if (start_command(wrun, wcd.c_str(), vars.get(), redir.get(), pi) != 0)
                     return;
-            }
 
-            ::CloseHandle(pi.hThread);
+                ::CloseHandle(pi.hThread);
+                process_handle = CUniqueHandle(pi.hProcess);
+            }
 
             m_usock.change_event_select(ctrl_ev, FD_CLOSE | FD_READ);
 
@@ -649,13 +651,11 @@ private:
             do {
                 const bool ctrl_socket_was_ok = !ctrl_socket_failed;
 
-                HANDLE wait_handles[2] = { ctrl_ev.get_unchecked(), pi.hProcess };
+                HANDLE wait_handles[2] = { ctrl_ev.get_checked(), process_handle.get_checked() };
                 wr = ::WaitForMultipleObjects(2, &wait_handles[0], FALSE, try_get_line ? 0 : INFINITE);
 
-                if (wr == WAIT_FAILED) {
-                    ::CloseHandle(pi.hProcess);
+                if (wr == WAIT_FAILED)
                     throw_last_error("WaitForMultipleObjects (run)"); // XXX not ideal
-                }
 
                 if (wr == WAIT_OBJECT_0) {
                     WSANETWORKEVENTS ctrl_network_events;
@@ -703,7 +703,7 @@ private:
                     try_get_line = false;
                     if (ctrl_socket_was_ok) {
                         m_usock.change_event_select(ctrl_ev, FD_CLOSE);
-                        ::TerminateProcess(pi.hProcess, 0xC0000001);
+                        ::TerminateProcess(process_handle.get_unchecked(), 0xC0000001);
                     }
                 }
 
@@ -711,11 +711,11 @@ private:
             } while (wr != WAIT_OBJECT_0 + 1);
 
             DWORD exit_code;
-            if (!::GetExitCodeProcess(pi.hProcess, &exit_code)) {
+            if (!::GetExitCodeProcess(process_handle.get_checked(), &exit_code)) {
                 Win32_perror("outbash: GetExitCodeProcess");
                 exit_code = (DWORD)-1;
             }
-            ::CloseHandle(pi.hProcess);
+            process_handle.close();
 
             if (redir.get())
                 redir.get()->close();
@@ -828,7 +828,7 @@ int main()
 
     if (::listen(sock.get(), SOMAXCONN_HINT(600)) != 0) { Win32_perror("outbash: listen"); std::exit(EXIT_FAILURE); }
 
-    CUniqueEvent accept_event = sock.create_auto_event(FD_ACCEPT);
+    CUniqueHandle accept_event = sock.create_auto_event(FD_ACCEPT);
 
     std::string tmp_filename = get_temp_filename(GetCurrentProcessId());
     std::string wsl_tmp_filename = convert_to_wsl_filename(tmp_filename);
