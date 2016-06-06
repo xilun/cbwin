@@ -41,15 +41,15 @@ pNtResumeProcess NtResumeProcess;
 
 int ImportNtProcess(void)
 {
-	HMODULE ntdll = GetModuleHandleA("ntdll.dll");
-	if (!ntdll)
-		return 0;
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    if (!ntdll)
+        return 0;
 
-	NtSuspendProcess = (pNtSuspendProcess)GetProcAddress(ntdll, "NtSuspendProcess");
+    NtSuspendProcess = (pNtSuspendProcess)GetProcAddress(ntdll, "NtSuspendProcess");
     if (NtSuspendProcess)
         NtResumeProcess = (pNtResumeProcess)GetProcAddress(ntdll, "NtResumeProcess");
 
-	return !!(NtSuspendProcess && NtResumeProcess);
+    return !!(NtSuspendProcess && NtResumeProcess);
 }
 
 bool NT_Suspend(HANDLE hProcess)
