@@ -163,13 +163,14 @@ static int start_command(std::wstring cmdline,
                          const wchar_t* dir,
                          EnvVars* vars,
                          StdRedirects* redirs,
+                         DWORD creation_flags,
                          PROCESS_INFORMATION& out_pi)
 {
-    STARTUPINFOEXW si;
+    ZeroMemory(&out_pi, sizeof(out_pi));
 
+    STARTUPINFOEXW si;
     ZeroMemory(&si, sizeof(si));
     si.StartupInfo.cb = sizeof(si);
-    ZeroMemory(&out_pi, sizeof(out_pi));
 
     const wchar_t* wdir = nullptr;
     if (dir != nullptr && *dir != L'\0') {
@@ -204,7 +205,7 @@ static int start_command(std::wstring cmdline,
         si.lpAttributeList = ahl.get_attribute_list_ptr();
     }
     if (!::CreateProcessW(module, &cmdline[0], NULL, NULL, inherit_handles,
-                          CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
+                          CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | creation_flags,
                           (LPVOID)env, wdir, (STARTUPINFOW*)&si, &out_pi)) {
         Win32_perror("outbash: CreateProcess");
         std::fprintf(stderr, "outbash: CreateProcess failed (%d) for command: %S\n", ::GetLastError(), cmdline.c_str());
@@ -255,7 +256,12 @@ class CUniqueHandle
 {
 public:
     CUniqueHandle() noexcept : m_handle(NULL) {}
-    explicit CUniqueHandle(HANDLE event) noexcept : m_handle(event) {}
+    explicit CUniqueHandle(HANDLE h) noexcept : m_handle(h) {}
+    CUniqueHandle(HANDLE h, const char* checked_origin) : m_handle(h)
+    {
+        if (!is_valid())
+            throw_last_error(checked_origin);
+    }
     CUniqueHandle(const CUniqueHandle&) = delete;
     CUniqueHandle& operator=(const CUniqueHandle&) = delete;
     CUniqueHandle(CUniqueHandle&& other) noexcept : m_handle(other.m_handle) { other.m_handle = NULL; }
@@ -592,8 +598,9 @@ private:
 
         void run()
         {
-            CUniqueHandle process_handle;
+            CUniqueHandle job_handle;
             std::unique_ptr<OutbashStdRedirects> redir(nullptr);
+            CUniqueHandle process_handle;
             CUniqueHandle ctrl_ev;
 
             // scope for locals lifetime:
@@ -637,11 +644,22 @@ private:
                     redir.get()->complete_connections(ctrl_ev);
                 }
 
-                if (start_command(wrun, wcd.c_str(), vars.get(), redir.get(), pi) != 0)
+                job_handle = CUniqueHandle(::CreateJobObject(nullptr, nullptr), "CreateJobObject");
+
+                if (start_command(wrun, wcd.c_str(), vars.get(), redir.get(), CREATE_SUSPENDED, pi) != 0)
                     return;
 
-                ::CloseHandle(pi.hThread);
                 process_handle = CUniqueHandle(pi.hProcess);
+
+                if (!::AssignProcessToJobObject(job_handle.get_unchecked(), pi.hProcess)) {
+                    DWORD system_error_code = ::GetLastError();
+                    ::CloseHandle(pi.hThread);
+                    ::TerminateProcess(process_handle.get_unchecked(), 0xC0000001);
+                    throw_system_error("AssignProcessToJobObject", system_error_code);
+                }
+
+                ::ResumeThread(pi.hThread);
+                ::CloseHandle(pi.hThread);
             }
 
             m_usock.change_event_select(ctrl_ev, FD_CLOSE | FD_READ | FD_WRITE);
@@ -727,7 +745,9 @@ private:
                     can_send = false;
                     if (ctrl_socket_was_ok) {
                         m_usock.change_event_select(ctrl_ev, FD_CLOSE);
-                        ::TerminateProcess(process_handle.get_unchecked(), 0xC0000001);
+                        // process exit code are not normalized, so lets just do like
+                        // what bash would return under Linux after a kill -9
+                        ::TerminateProcess(process_handle.get_unchecked(), 137);
                     }
                 }
 
@@ -872,7 +892,7 @@ int main()
     PROCESS_INFORMATION pi;
     if (start_command(
             utf::widen("bash --rcfile \"" + wsl_tmp_filename + "\" ") + get_cmd_line_params(),
-            nullptr, nullptr, nullptr,
+            nullptr, nullptr, nullptr, 0,
             pi) != 0) {
         _wremove(utf::widen(tmp_filename).c_str());
         std::exit(EXIT_FAILURE);
