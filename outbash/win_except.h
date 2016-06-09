@@ -26,3 +26,5 @@
 
 [[noreturn]] void throw_last_error(const char* what);
 [[noreturn]] void throw_system_error(const char* what, DWORD system_error_code);
+
+void Win32_perror(const char* what);

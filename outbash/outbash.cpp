@@ -106,33 +106,6 @@ static std::wstring get_comspec()
 }
 static const std::wstring comspec = get_comspec();
 
-static void Win32_perror(const char* what)
-{
-    const int errnum = ::GetLastError();
-    const bool what_present = (what && *what);
-
-    WCHAR *str;
-    DWORD nbWChars = ::FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER
-                                      | FORMAT_MESSAGE_FROM_SYSTEM
-                                      | FORMAT_MESSAGE_IGNORE_INSERTS
-                                      | FORMAT_MESSAGE_MAX_WIDTH_MASK,
-                                      nullptr, (DWORD)errnum, 0, (LPWSTR)&str,
-                                      0, nullptr);
-    if (nbWChars == 0) {
-        std::fprintf(stderr, "%s%swin32 error %d\n",
-                     what_present ? what : "",
-                     what_present ? ": " : "",
-                     errnum);
-    } else {
-        std::fprintf(stderr, "%s%s%S\n",
-                     what_present ? what : "",
-                     what_present ? ": " : "",
-                     str);
-        ::LocalFree(str);
-    }
-    ::SetLastError(errnum);
-}
-
 int wstr_case_ascii_ncmp(const wchar_t* s1, const wchar_t* s2, size_t n)
 {
     wchar_t c1, c2;
@@ -664,7 +637,7 @@ private:
 
                 process_handle = CUniqueHandle(pi.hProcess);
 
-                if (!::AssignProcessToJobObject(job_handle.get_unchecked(), pi.hProcess)) {
+                if (!::AssignProcessToJobObject(job_handle.get_unchecked(), process_handle.get_unchecked())) {
                     DWORD system_error_code = ::GetLastError();
                     ::CloseHandle(pi.hThread);
                     ::TerminateProcess(process_handle.get_unchecked(), 0xC0000001);
