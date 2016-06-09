@@ -648,11 +648,14 @@ private:
 
                 JOBOBJECT_EXTENDED_LIMIT_INFORMATION job_limit_infos;
                 ZeroMemory(&job_limit_infos, sizeof(job_limit_infos));
-                // we are not trying to provide security about anything, so allowing the convenience of
-                // *explicitely* breaking away from this job is better than pretending this will not
+                // * We are not trying to provide security about anything, so allowing the convenience
+                // of *explicitely* breaking away from this job is better than pretending this will not
                 // happen, because there are probably 100000 ways to create arbitrary processes that
                 // survive the job even if breaking away is not allowed here.
-                job_limit_infos.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+                // * If we fail here with a C++ exception, or if the whole outbash process fails, let
+                // the job automatically terminate. For now I just can't think of any good reason we
+                // could let it continue to run, especially given breaking away is allowed.
+                job_limit_infos.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
                 if (!::SetInformationJobObject(job_handle.get_unchecked(), JobObjectExtendedLimitInformation, &job_limit_infos, sizeof(job_limit_infos)))
                     throw_last_error("SetInformationJobObject");
 
