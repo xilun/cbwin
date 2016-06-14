@@ -45,6 +45,7 @@
 #include "env.h"
 #include "process.h"
 #include "win_except.h"
+#include "job.h"
 #include "ntsuspend.h"
 
 #pragma comment(lib, "Ws2_32.lib")
@@ -584,6 +585,7 @@ private:
                 std::unique_ptr<EnvVars> vars(nullptr);
                 auto vars_cp = [&] { if (!vars) vars.reset(new EnvVars(initial_env_vars)); return vars.get(); };
                 auto inst_redir = [&] { if (!redir) redir.reset(new OutbashStdRedirects); return redir.get(); };
+                bool silent_breakaway = false;
 
                 while (1) {
                     std::string line = recv_line();
@@ -602,6 +604,8 @@ private:
                         inst_redir()->parse_redir_param(StdRedirects::REDIR_STDOUT, &line[7]);
                     else if (startswith(line, "stderr:"))
                         inst_redir()->parse_redir_param(StdRedirects::REDIR_STDERR, &line[7]);
+                    else if (line == "silent_breakaway:1")
+                        silent_breakaway = true;
                 }
 
                 ctrl_ev = m_usock.create_manual_event(FD_CLOSE);
@@ -621,14 +625,23 @@ private:
 
                 JOBOBJECT_EXTENDED_LIMIT_INFORMATION job_limit_infos;
                 ZeroMemory(&job_limit_infos, sizeof(job_limit_infos));
+
                 // * We are not trying to provide security about anything, so allowing the convenience
-                // of *explicitely* breaking away from this job is better than pretending this will not
-                // happen, because there are probably 100000 ways to create arbitrary processes that
-                // survive the job even if breaking away is not allowed here.
+                //   of *explicitely* breaking away from this job is better than pretending this will
+                //   not happen, because there are probably 100000 ways to create arbitrary processes
+                //   that survive the job even if breaking away is not allowed here.
                 // * If we fail here with a C++ exception, or if the whole outbash process fails, let
-                // the job automatically terminate. For now I just can't think of any good reason we
-                // could let it continue to run, especially given breaking away is allowed.
-                job_limit_infos.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                //   the job automatically terminate. For now I just can't think of any good reason we
+                //   could let it continue to run, especially given breaking away is allowed.
+                // * The "wstart" command should obviously not create the target program in the job,
+                //   and cmd does not CREATE_BREAKAWAY_FROM_JOB (that does not silently fallback to not
+                //   breaking away, so I don't think cmd will ever do it) so there is a mechanism to
+                //   require JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK.
+
+                job_limit_infos.BasicLimitInformation.LimitFlags =
+                    (silent_breakaway ? JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK : JOB_OBJECT_LIMIT_BREAKAWAY_OK)
+                    | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
                 if (!::SetInformationJobObject(job_handle.get_unchecked(), JobObjectExtendedLimitInformation, &job_limit_infos, sizeof(job_limit_infos)))
                     throw_last_error("SetInformationJobObject");
 
@@ -694,6 +707,7 @@ private:
                         // XXX: be mad about nul bytes and/or unknown commands?
                         if (line == "suspend") {
                             NT_Suspend(process_handle.get_checked());
+                            Suspend_Job_Object(job_handle.get_unchecked());
                             // XXX we should maybe handle NT_Suspend() failures and propagate them
                             to_send = "suspend_ok\n";
                         } else if (line == "resume") {

@@ -835,7 +835,7 @@ int main(int argc, char *argv[])
         string_append(&outbash_command, "\nrun:cmd /C ");
         break;
     case TOOL_WSTART:
-        string_append(&outbash_command, "\nrun:cmd /C start ");
+        string_append(&outbash_command, "\nsilent_breakaway:1\nrun:cmd /C start ");
         break;
     }
 

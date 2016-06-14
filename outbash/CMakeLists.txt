@@ -13,6 +13,8 @@ add_executable(outbash
                win_except.cpp
                ntsuspend.h
                ntsuspend.cpp
+               job.h
+               job.cpp
                outbash.cpp
                outbash.rc)
 
