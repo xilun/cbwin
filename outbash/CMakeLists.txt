@@ -36,8 +36,13 @@ if(MSVC)
       CMAKE_CXX_FLAGS_RELWITHDEBINFO
     )
     foreach(variable ${variables})
+        # in general, statically link (target_link_libraries below are an exception for the ucrt):
         if(${variable} MATCHES "/MD")
             string(REGEX REPLACE "/MD" "/MT" ${variable} "${${variable}}")
+        endif()
+        # remove NDEBUG to keep assertions:
+        if(${variable} MATCHES "/D NDEBUG")
+            string(REGEX REPLACE "/D NDEBUG" "" ${variable} "${${variable}}")
         endif()
     endforeach()
 
