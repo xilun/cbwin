@@ -667,6 +667,7 @@ private:
             bool can_send = false;
             bool ctrl_socket_failed = false;
             const char* to_send = nullptr;
+            CSuspendedJob suspended_job;
             DWORD wr;
             do {
                 const bool ctrl_socket_was_ok = !ctrl_socket_failed;
@@ -706,12 +707,10 @@ private:
                     if (try_get_line) {
                         // XXX: be mad about nul bytes and/or unknown commands?
                         if (line == "suspend") {
-                            NT_Suspend(process_handle.get_checked());
-                            Suspend_Job_Object(job_handle.get_unchecked());
-                            // XXX we should maybe handle NT_Suspend() failures and propagate them
+                            suspended_job = Suspend_Job_Object(job_handle.get_unchecked());
                             to_send = "suspend_ok\n";
                         } else if (line == "resume") {
-                            NT_Resume(process_handle.get_checked());
+                            suspended_job.resume();
                         }
                     }
                 }
@@ -858,7 +857,7 @@ int main()
 {
     init_locale_console_cp();
     if (init_winsock() != 0) std::exit(EXIT_FAILURE);
-    if (!ImportNtProcess()) {
+    if (!ImportNtDll()) {
         Win32_perror("outbash: ImportNtProcess");
         std::fprintf(stderr, "outbash: could not import Nt suspend/resume process functions\n");
         std::exit(EXIT_FAILURE);

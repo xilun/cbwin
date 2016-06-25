@@ -39,7 +39,7 @@ pNtSuspendProcess NtSuspendProcess;
 typedef LONG (NTAPI *pNtResumeProcess )( HANDLE ProcessHandle );
 pNtResumeProcess NtResumeProcess;
 
-int ImportNtProcess(void)
+int ImportNtDll(void)
 {
     HMODULE ntdll = GetModuleHandleA("ntdll.dll");
     if (!ntdll)
@@ -62,7 +62,7 @@ bool NT_Suspend(HANDLE hProcess)
     return true;
 }
 
-bool NT_Resume (HANDLE hProcess)
+bool NT_Resume(HANDLE hProcess)
 {
     LONG status = NtResumeProcess(hProcess);
     if (!NT_SUCCESS(status)) {
