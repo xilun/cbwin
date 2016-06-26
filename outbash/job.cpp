@@ -29,6 +29,7 @@
 
 #include <new>
 #include <stdexcept>
+#include <algorithm>
 
 #include <cstdio>
 #include <cstdlib>
@@ -51,7 +52,7 @@ enum // values must not change
 enum // values must not change
 {
     JPH_HUnknown    = 0,
-    JPH_HOpenFailed = 1,
+    JPH_HOpenFailed = 1,    // for another reason than if the process died
 };
 
 static bool is_real_handle(HANDLE h)
@@ -162,6 +163,14 @@ HANDLE Take_Handle_From_Pid_List(PJOBOBJECT_BASIC_PROCESS_ID_LIST pid_list, DWOR
     return (HANDLE)JPH_HUnknown;
 }
 
+enum class EActivity
+{
+    None,
+    Dubious,
+    Glimpsed,
+    Yes
+};
+
 class CJobPidHandles {
 public:
     CJobPidHandles() : m_pHPidList(nullptr) {}
@@ -178,7 +187,7 @@ public:
     CJobPidHandles(HANDLE hJob);
     ~CJobPidHandles();
 
-    bool open_suspend_round(CJobPidHandles& previous);
+    EActivity open_suspend_round(CJobPidHandles& previous);
 
     void resume_all_suspended();
 
@@ -233,44 +242,83 @@ CJobPidHandles::CJobPidHandles(HANDLE hJob)
     }
 }
 
-// to be called on a freshly constructed list
-bool CJobPidHandles::open_suspend_round(CJobPidHandles& previous)
+static EActivity max_activity(EActivity a, EActivity b)
 {
-    bool activity = false;
+    return static_cast<EActivity>(std::max(static_cast<int>(a), static_cast<int>(b)));
+}
+
+// to be called on a freshly constructed list
+EActivity CJobPidHandles::open_suspend_round(CJobPidHandles& previous)
+{
+    EActivity activity = EActivity::None;
+
     for (SSIZE_T idx = 0; idx < (SSIZE_T)m_pHPidList->NumberOfProcessIdsInList; idx++) {
+
         DWORD pid = (DWORD)m_pHPidList->ProcessIdList[idx];
-        HANDLE hdl = previous.take_handle(pid);
+
+        HANDLE hdl = previous.take_handle(pid); // this takes ownership of the handle
+
         if (is_real_handle(hdl)) { // already opened
             if (suspend_has_been_attempted(hdl)) {
+                // propagate the handle and JPH_Tag_Suspended or JPH_Tag_Suspend_Failed from previous list
                 m_pHPidList->ProcessIdList[idx] |= cast_HANDLE_to_msd(hdl) << 32;
             } else {
                 // PID enumerated while handle opened => we are sure it is in the Job.
-                // We could use IsProcessInJob(), but we are forced to do multiple rounds for
-                // multiple reasons, so it is as easy to detect it like that, and we don't
-                // have to think about IsProcessInJob() failures...
+                // We could use IsProcessInJob(), but we are forced to do multiple rounds to try to
+                // cover for potential races with newly created processes, so it is easier to detect
+                // it like that, and we don't have to think about IsProcessInJob() failures...
                 DWORD tag = NT_Suspend(untag_handle(hdl)) ? JPH_Tag_Suspended : JPH_Tag_Suspend_Failed;
+
+                // Save the process handle and if NT_Suspend() succeeded.
+                // This will be propagated across future rounds.
                 m_pHPidList->ProcessIdList[idx] |= cast_HANDLE_to_msd(tag_handle(hdl, tag)) << 32;
-                activity = true;
+
+                // This process could have created others after we got the PID list, and we have made
+                // some progress in this round, so we definitely want to schedule another one:
+                activity = EActivity::Yes;
             }
         } else {
             // not opened, might be because:
-            //  - this PID has not been seen in a previous round,
+            //  - this PID has not been seen in a previous round (or this is the first one),
             //  - a previous attempt of OpenProcess() for this PID failed, in which case
             //    we don't know whether the same PID we see here is still for the same
-            //    process, so we must retry
+            //    process, so we should retry.
             HANDLE hProcess = ::OpenProcess(SYNCHRONIZE | PROCESS_SUSPEND_RESUME | PROCESS_QUERY_LIMITED_INFORMATION,
                                             FALSE,
                                             pid);
             if (hProcess && hProcess != INVALID_HANDLE_VALUE) {
                 if (((ULONG_PTR)hProcess & JPH_Tag_Mask) != 0)
                     throw std::domain_error("Process Handle with non-zero lsb bits");
+
                 m_pHPidList->ProcessIdList[idx] |= cast_HANDLE_to_msd(tag_handle(hProcess, JPH_Tag_Opened)) << 32;
-                activity = true;
-            } else if (::GetLastError() != ERROR_INVALID_PARAMETER) {
+
+                // We only have opened, but not suspended yet (we actually are not sure this process
+                // really is in the Job at this point). Schedule another round to make the suspend
+                // attempt if still in the list while we have an handle.
+                // See also the comment above the NT_Suspend() call.
+                activity = EActivity::Yes;
+
+            } else if (::GetLastError() == ERROR_INVALID_PARAMETER) {
+                // The anticipated meaning is that the process with such PID has died and been reaped,
+                // but I have no proof that there are no other conditions that could lead to here.
+                // So we will retry a few times if this kind of situation persists across rounds
+                // (because that could end up in the creation of suspendable processes), however we
+                // would not be making any progress by just observing that over and over, so if this
+                // is the only thing that happens we won't insist beyond reason.
+                activity = max_activity(activity, EActivity::Glimpsed);
+
+            } else { // "true" open failure -- process still here but could not open:
                 m_pHPidList->ProcessIdList[idx] |= (ULONG_PTR)JPH_HOpenFailed << 32;
-            } // NOTE: ERROR_INVALID_PARAMETER OpenProcess errors are completely ignored (PID of a process that died in the meantime)
+
+                // If we repeatedly try to open the same PID, and fail, there are even less
+                // reasons to believe something interesting will eventually happen.
+                // We could be each time observing a different process, but we should prefer
+                // the simplest hypothesis: we are probably stuck on the same unexpected error.
+                activity = max_activity(activity, (hdl == (HANDLE)JPH_HOpenFailed) ? EActivity::Dubious : EActivity::Glimpsed);
+            }
         }
     }
+
     return activity;
 }
 
@@ -326,12 +374,28 @@ CSuspendedJobImpl::CSuspendedJobImpl(HANDLE hJob)
     m_orig_cpu_rate_control_info{ 0 },
     m_cpu_rate_control_applied(false)
 {
-    bool activity;
+    EActivity activity = EActivity::Yes;
+    int round = 0, round_after_progress = 0;
     do {
         CJobPidHandles jph(hJob);
+        if (activity == EActivity::Yes)
+            round_after_progress = round;
         activity = jph.open_suspend_round(m_job_pid_handles);
         m_job_pid_handles = std::move(jph);
-    } while (activity);
+        round++;
+    } while (round < 1000 // there is no guarantee the algorithm terminates otherwise...
+             && (   (activity == EActivity::Yes)
+                 || (activity == EActivity::Glimpsed && round <= round_after_progress + 4)
+                 || (activity == EActivity::Dubious  && round <= round_after_progress + 1)));
+
+// examples:
+// round | Yes -> round |  Dubious -> round | Dubious -> o
+// round | Yes -> round | Glimpsed -> round | Glimpsed -> round | Glimpsed -> round | Glimpsed -> round | Glimpsed -> o
+// 0              1                   2                   3                   4                   5
+//
+// Note that for Dubious to be detected, open must already have failed on the previous round. One more round is allowed,
+// and if open still fails this will be the third time. (If Dubious comes after Glimpsed, we can bail out after only 2
+// open failures, but we delay the stopping for at least the same number of rounds anyway.)
 }
 
 void CSuspendedJobImpl::resume()

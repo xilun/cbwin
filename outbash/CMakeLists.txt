@@ -18,7 +18,7 @@ add_executable(outbash
                outbash.cpp
                outbash.rc)
 
-add_definitions(/D_UNICODE /DUNICODE)
+add_definitions(/D_UNICODE /DUNICODE /DNOMINMAX)
 
 if(MSVC)
     # Wall is basically unusable as is with MSVC, because it needlessly chokes
