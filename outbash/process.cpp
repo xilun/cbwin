@@ -150,11 +150,6 @@ HANDLE StdRedirects::get_handle(role_e role) const
     return m_handle.at(role);
 }
 
-HANDLE StdRedirects::get_owned_handle(role_e role) const
-{
-    return m_handleOwned.at(role);
-}
-
 AttributeHandleList StdRedirects::attribute_handle_list() const
 {
     return AttributeHandleList(std::vector<HANDLE>(m_handle.begin(), m_handle.end()));

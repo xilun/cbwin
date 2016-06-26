@@ -56,7 +56,6 @@ public:
     void set_same_as_other(role_e role, role_e other);
     AttributeHandleList attribute_handle_list() const;
     HANDLE get_handle(role_e role) const;
-    HANDLE get_owned_handle(role_e role) const;
 private:
     std::array<HANDLE, 3>  m_handleOwned;
     std::array<HANDLE, 3>  m_handle;
