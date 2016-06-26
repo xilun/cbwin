@@ -12,7 +12,6 @@
 
 void DisplayNTError(const char* what, LONG NTStatus)
 {
-    const bool what_present = (what && *what);
     HMODULE ntdll = GetModuleHandleA("ntdll.dll");
 
     WCHAR *str;
