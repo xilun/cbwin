@@ -188,7 +188,7 @@ public:
     ~CJobPidHandles();
 
     EActivity open_suspend_round(CJobPidHandles& previous);
-
+    void only_keep_suspended();
     void resume_all_suspended();
 
 private:
@@ -322,6 +322,24 @@ EActivity CJobPidHandles::open_suspend_round(CJobPidHandles& previous)
     return activity;
 }
 
+void CJobPidHandles::only_keep_suspended()
+{
+    assert(m_pHPidList);
+    SSIZE_T dest_idx = 0;
+    for (SSIZE_T idx = 0; idx < (SSIZE_T)m_pHPidList->NumberOfProcessIdsInList; idx++) {
+        DWORD msd = m_pHPidList->ProcessIdList[idx] >> 32;
+        DWORD msd_tag = msd & JPH_Tag_Mask;
+        DWORD msd_value = msd & ~(DWORD)JPH_Tag_Mask;
+        if (msd_tag == JPH_Tag_Suspended && msd_value != 0) {
+            m_pHPidList->ProcessIdList[dest_idx++] = m_pHPidList->ProcessIdList[idx];
+        } else if (msd_tag != JPH_Tag_Skip_Idx && msd_value != 0) {
+            ::CloseHandle(cast_msd_to_HANDLE(msd_value));
+        }
+    }
+    m_pHPidList->NumberOfAssignedProcesses = (DWORD)dest_idx;
+    m_pHPidList->NumberOfProcessIdsInList = (DWORD)dest_idx;
+}
+
 void CJobPidHandles::resume_all_suspended()
 {
     assert(m_pHPidList);
@@ -396,6 +414,8 @@ CSuspendedJobImpl::CSuspendedJobImpl(HANDLE hJob)
 // Note that for Dubious to be detected, open must already have failed on the previous round. One more round is allowed,
 // and if open still fails this will be the third time. (If Dubious comes after Glimpsed, we can bail out after only 2
 // open failures, but we delay the stopping for at least the same number of rounds anyway.)
+
+    m_job_pid_handles.only_keep_suspended();
 }
 
 void CSuspendedJobImpl::resume()
