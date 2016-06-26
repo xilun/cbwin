@@ -29,7 +29,7 @@ void DisplayNTError(const char* what, LONG NTStatus)
     if (nbWChars == 0) {
         std::fprintf(stderr, "%s: NT Error Status: 0x%lX\n", what, NTStatus);
     } else {
-        std::fprintf(stderr, "%s: %S\n", what, str);
+        std::fprintf(stderr, "%s: 0x%lX: %S\n", what, NTStatus, str);
         LocalFree(str);
     }
 }
@@ -56,7 +56,11 @@ bool NT_Suspend(HANDLE hProcess)
 {
     LONG status = NtSuspendProcess(hProcess);
     if (!NT_SUCCESS(status)) {
-        DisplayNTError("outbash: NtSuspendProcess", status);
+        // The caller needs to be properly notified in all failure cases, but
+        // we don't need a trace if it failed just because the target process
+        // is terminating:
+        if (status != STATUS_PROCESS_IS_TERMINATING)
+            DisplayNTError("outbash: NtSuspendProcess", status);
         return false;
     }
     return true;
@@ -66,7 +70,13 @@ bool NT_Resume(HANDLE hProcess)
 {
     LONG status = NtResumeProcess(hProcess);
     if (!NT_SUCCESS(status)) {
-        DisplayNTError("outbash: NtResumeProcess", status);
+        // Now this is far more mysterious than in the NT_Suspend() case, but
+        // I've actually seen it happening. That means the NT API is not
+        // sequentially consistent here, which is quite disturbing, (or maybe
+        // it just sometimes returns bullshit error codes) but we are talking
+        // about Windows after all:
+        if (status != STATUS_PROCESS_IS_TERMINATING)
+            DisplayNTError("outbash: NtResumeProcess", status);
         return false;
     }
     return true;

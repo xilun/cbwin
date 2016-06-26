@@ -39,6 +39,13 @@
 #include "win_except.h"
 #include "ntsuspend.h"
 
+
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+namespace
+{
+
+
 enum // values must not change
 {
     JPH_Tag_Suspended       = 0,
@@ -163,6 +170,8 @@ HANDLE Take_Handle_From_Pid_List(PJOBOBJECT_BASIC_PROCESS_ID_LIST pid_list, DWOR
     return (HANDLE)JPH_HUnknown;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 enum class EActivity
 {
     None,
@@ -171,6 +180,8 @@ enum class EActivity
     Yes
 };
 
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 class CJobPidHandles {
 public:
     CJobPidHandles() : m_pHPidList(nullptr) {}
@@ -259,9 +270,18 @@ EActivity CJobPidHandles::open_suspend_round(CJobPidHandles& previous)
         HANDLE hdl = previous.take_handle(pid); // this takes ownership of the handle
 
         if (is_real_handle(hdl)) { // already opened
+
             if (suspend_has_been_attempted(hdl)) {
+
                 // propagate the handle and JPH_Tag_Suspended or JPH_Tag_Suspend_Failed from previous list
                 m_pHPidList->ProcessIdList[idx] |= cast_HANDLE_to_msd(hdl) << 32;
+
+                // We want EActivity::None to be a quite strong guarantee that the whole Job has
+                // been suspended, so we consider a propagation of a JPH_Tag_Suspend_Failed handle
+                // as EActivity::Dubious.
+                if (((ULONG_PTR)hdl & JPH_Tag_Mask) == JPH_Tag_Suspend_Failed)
+                    activity = max_activity(activity, EActivity::Dubious);
+
             } else {
                 // PID enumerated while handle opened => we are sure it is in the Job.
                 // We could use IsProcessInJob(), but we are forced to do multiple rounds to try to
@@ -283,9 +303,11 @@ EActivity CJobPidHandles::open_suspend_round(CJobPidHandles& previous)
             //  - a previous attempt of OpenProcess() for this PID failed, in which case
             //    we don't know whether the same PID we see here is still for the same
             //    process, so we should retry.
+
             HANDLE hProcess = ::OpenProcess(SYNCHRONIZE | PROCESS_SUSPEND_RESUME | PROCESS_QUERY_LIMITED_INFORMATION,
                                             FALSE,
                                             pid);
+
             if (hProcess && hProcess != INVALID_HANDLE_VALUE) {
                 if (((ULONG_PTR)hProcess & JPH_Tag_Mask) != 0)
                     throw std::domain_error("Process Handle with non-zero lsb bits");
@@ -303,11 +325,12 @@ EActivity CJobPidHandles::open_suspend_round(CJobPidHandles& previous)
                 // but I have no proof that there are no other conditions that could lead to here.
                 // So we will retry a few times if this kind of situation persists across rounds
                 // (because that could end up in the creation of suspendable processes), however we
-                // would not be making any progress by just observing that over and over, so if this
-                // is the only thing that happens we won't insist beyond reason.
+                // would not make progress just by observing it over and over, so if this is the only
+                // thing that happens we won't insist beyond reason.
                 activity = max_activity(activity, EActivity::Glimpsed);
 
             } else { // "true" open failure -- process still here but could not open:
+
                 m_pHPidList->ProcessIdList[idx] |= (ULONG_PTR)JPH_HOpenFailed << 32;
 
                 // If we repeatedly try to open the same PID, and fail, there are even less
@@ -324,32 +347,36 @@ EActivity CJobPidHandles::open_suspend_round(CJobPidHandles& previous)
 
 void CJobPidHandles::only_keep_suspended()
 {
-    assert(m_pHPidList);
-    SSIZE_T dest_idx = 0;
-    for (SSIZE_T idx = 0; idx < (SSIZE_T)m_pHPidList->NumberOfProcessIdsInList; idx++) {
-        DWORD msd = m_pHPidList->ProcessIdList[idx] >> 32;
-        DWORD msd_tag = msd & JPH_Tag_Mask;
-        DWORD msd_value = msd & ~(DWORD)JPH_Tag_Mask;
-        if (msd_tag == JPH_Tag_Suspended && msd_value != 0) {
-            m_pHPidList->ProcessIdList[dest_idx++] = m_pHPidList->ProcessIdList[idx];
-        } else if (msd_tag != JPH_Tag_Skip_Idx && msd_value != 0) {
-            ::CloseHandle(cast_msd_to_HANDLE(msd_value));
+    if (m_pHPidList)
+    {
+        SSIZE_T dest_idx = 0;
+        for (SSIZE_T idx = 0; idx < (SSIZE_T)m_pHPidList->NumberOfProcessIdsInList; idx++) {
+            DWORD msd = m_pHPidList->ProcessIdList[idx] >> 32;
+            DWORD msd_tag = msd & JPH_Tag_Mask;
+            DWORD msd_value = msd & ~(DWORD)JPH_Tag_Mask;
+            if (msd_tag == JPH_Tag_Suspended && msd_value != 0) {
+                m_pHPidList->ProcessIdList[dest_idx++] = m_pHPidList->ProcessIdList[idx];
+            } else if (msd_tag != JPH_Tag_Skip_Idx && msd_value != 0) {
+                ::CloseHandle(cast_msd_to_HANDLE(msd_value));
+            }
         }
+        m_pHPidList->NumberOfAssignedProcesses = (DWORD)dest_idx;
+        m_pHPidList->NumberOfProcessIdsInList = (DWORD)dest_idx;
     }
-    m_pHPidList->NumberOfAssignedProcesses = (DWORD)dest_idx;
-    m_pHPidList->NumberOfProcessIdsInList = (DWORD)dest_idx;
 }
 
 void CJobPidHandles::resume_all_suspended()
 {
-    assert(m_pHPidList);
-    for (SSIZE_T idx = 0; idx < (SSIZE_T)m_pHPidList->NumberOfProcessIdsInList; idx++) {
-        DWORD msd = m_pHPidList->ProcessIdList[idx] >> 32;
-        DWORD msd_tag = msd & JPH_Tag_Mask;
-        DWORD msd_value = msd & ~(DWORD)JPH_Tag_Mask;
-        if (msd_tag == JPH_Tag_Suspended && msd_value != 0) { // NOTE: JPH_Tag_Suspended == 0
-            NT_Resume(cast_msd_to_HANDLE(msd_value)); // XXX check?
-            m_pHPidList->ProcessIdList[idx] |= (ULONG_PTR)JPH_Tag_Opened << 32;
+    if (m_pHPidList)
+    {
+        for (SSIZE_T idx = 0; idx < (SSIZE_T)m_pHPidList->NumberOfProcessIdsInList; idx++) {
+            DWORD msd = m_pHPidList->ProcessIdList[idx] >> 32;
+            DWORD msd_tag = msd & JPH_Tag_Mask;
+            DWORD msd_value = msd & ~(DWORD)JPH_Tag_Mask;
+            if (msd_tag == JPH_Tag_Suspended && msd_value != 0) { // NOTE: JPH_Tag_Suspended == 0
+                NT_Resume(cast_msd_to_HANDLE(msd_value));
+                m_pHPidList->ProcessIdList[idx] |= (ULONG_PTR)JPH_Tag_Opened << 32;
+            }
         }
     }
 }
@@ -375,10 +402,19 @@ CJobPidHandles::~CJobPidHandles()
     free_hpid_list();
 }
 
+
+} // namespace
+
+
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 class CSuspendedJobImpl {
 public:
     CSuspendedJobImpl(HANDLE hJob);
     void resume();
+private:
+    void job_cpu_rate_limit();
+    void job_cpu_rate_restore();
 private:
     CJobPidHandles                          m_job_pid_handles;
     HANDLE                                  m_hJob;
@@ -392,6 +428,10 @@ CSuspendedJobImpl::CSuspendedJobImpl(HANDLE hJob)
     m_orig_cpu_rate_control_info{ 0 },
     m_cpu_rate_control_applied(false)
 {
+    job_cpu_rate_limit();
+
+    // XXX: handle exceptions
+
     EActivity activity = EActivity::Yes;
     int round = 0, round_after_progress = 0;
     do {
@@ -416,9 +456,46 @@ CSuspendedJobImpl::CSuspendedJobImpl(HANDLE hJob)
 // open failures, but we delay the stopping for at least the same number of rounds anyway.)
 
     m_job_pid_handles.only_keep_suspended();
+
+    // After NtSuspendProcess() returns successfully, the observable state of the process (e.g. by
+    // Task Manager or Process Hacker) will *eventually* be Suspended (if not resumed in the
+    // meantime or already blocked on some syscalls), but progress toward this point seems to be
+    // affected by the CPU rate limitation. So if we are quite sure that the whole Job has been
+    // suspended, we disable the CPU rate limitation here to get a faster visibility by the rest
+    // of the system -- otherwise it is only lifted on resume, so that the impact of potentially
+    // not-suspended processes in the Job is somewhat limited.
+    if (activity == EActivity::None)
+        job_cpu_rate_restore();
 }
 
-void CSuspendedJobImpl::resume()
+void CSuspendedJobImpl::job_cpu_rate_limit()
+{
+    if (!m_cpu_rate_control_applied)
+    {
+        if (!::QueryInformationJobObject(
+                    m_hJob,
+                    JobObjectCpuRateControlInformation,
+                    &m_orig_cpu_rate_control_info,
+                    sizeof(m_orig_cpu_rate_control_info),
+                    NULL))
+            return;
+
+        JOBOBJECT_CPU_RATE_CONTROL_INFORMATION slow_job_cpu_rate;
+        ZeroMemory(&slow_job_cpu_rate, sizeof(slow_job_cpu_rate));
+        slow_job_cpu_rate.ControlFlags = JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
+        slow_job_cpu_rate.CpuRate = 1; // 0.01% CPU
+        if (!::SetInformationJobObject(
+                    m_hJob,
+                    JobObjectCpuRateControlInformation,
+                    &slow_job_cpu_rate,
+                    sizeof(slow_job_cpu_rate)))
+            return;
+
+        m_cpu_rate_control_applied = true;
+    }
+}
+
+void CSuspendedJobImpl::job_cpu_rate_restore()
 {
     if (m_cpu_rate_control_applied) {
         if (!::SetInformationJobObject(
@@ -427,13 +504,21 @@ void CSuspendedJobImpl::resume()
                 &m_orig_cpu_rate_control_info,
                 sizeof(m_orig_cpu_rate_control_info))) {
             // here this is quite annoying, yet we can't do much
-            Win32_perror("CSuspendedJobImpl::resume: SetInformationJobObject (disabling CPU rate limiting)");
+            Win32_perror("CSuspendedJobImpl::job_cpu_rate_restore: SetInformationJobObject (disabling CPU rate limiting) failed");
         }
         m_cpu_rate_control_applied = false;
     }
+}
+
+void CSuspendedJobImpl::resume()
+{
+    job_cpu_rate_restore();
     m_job_pid_handles.resume_all_suspended();
 }
 
+
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 void CSuspendedJob::resume()
 {
     if (m_pImpl)
@@ -460,77 +545,3 @@ CSuspendedJob Suspend_Job_Object(HANDLE hJob)
     blah.m_pImpl = new CSuspendedJobImpl(hJob);
     return blah;
 }
-
-/*BOOL Suspend_Job_Object(_In_ HANDLE hJob)
-{
-    PJOBOBJECT_BASIC_PROCESS_ID_LIST job_pid_list;
-    BOOL result = TRUE;
-    bool rate_limit = true;
-
-    JOBOBJECT_CPU_RATE_CONTROL_INFORMATION orig_job_cpu_rate;
-    if (!::QueryInformationJobObject(
-                hJob,
-                JobObjectCpuRateControlInformation,
-                &orig_job_cpu_rate,
-                sizeof(orig_job_cpu_rate),
-                NULL))
-        rate_limit = false;
-
-    if (rate_limit) {
-        JOBOBJECT_CPU_RATE_CONTROL_INFORMATION slow_job_cpu_rate;
-        ZeroMemory(&slow_job_cpu_rate, sizeof(slow_job_cpu_rate));
-        slow_job_cpu_rate.ControlFlags = JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
-        slow_job_cpu_rate.CpuRate = 1; // 0.01% CPU
-        if (!::SetInformationJobObject(
-                    hJob,
-                    JobObjectCpuRateControlInformation,
-                    &slow_job_cpu_rate,
-                    sizeof(slow_job_cpu_rate)))
-            rate_limit = false;
-    }
-
-    try {
-    CJobPidHandles job_plist(hJob);
-
-    if (!Get_Job_Pid_List(hJob, &job_pid_list)) {
-        Win32_perror("Suspend_Job_Object: Get_Job_Pid_List");
-        result = FALSE;
-        goto bye;
-    }
-    for (DWORD i = 0; i < job_pid_list->NumberOfProcessIdsInList; i++) {
-        std::printf(" ZZZ: %u\n", (DWORD)job_pid_list->ProcessIdList[i]);
-        HANDLE hProcess = ::OpenProcess(SYNCHRONIZE | PROCESS_SUSPEND_RESUME | PROCESS_QUERY_LIMITED_INFORMATION,
-                                        FALSE,
-                                        (DWORD)job_pid_list->ProcessIdList[i]);
-        if (hProcess) {
-            BOOL in_job;
-            if (!::IsProcessInJob(hProcess, hJob, &in_job)) {
-                ::CloseHandle(hProcess);
-            } else {
-                NT_Suspend(hProcess);
-                // XXX: mark as suspended on success, ignored on failure
-            }
-        } else if (::GetLastError() != ERROR_INVALID_PARAMETER) { // note: no process with this PID => ERROR_INVALID_PARAMETER
-            
-        }
-    }
-
-bye:
-    if (job_pid_list != NULL)
-        ::HeapFree(GetProcessHeap(), 0, job_pid_list);
-
-    if (rate_limit) {
-        // we should do that only on resume...
-        if (!::SetInformationJobObject(
-                hJob,
-                JobObjectCpuRateControlInformation,
-                &orig_job_cpu_rate,
-                sizeof(orig_job_cpu_rate))) {
-            // for the others, we could do without, this time this is more annoying, yet we can't do much
-            Win32_perror("Suspend_Job_Object: SetInformationJobObject (disabling CPU rate limiting)");
-        }
-    }
-
-    return result;
-}
-*/
