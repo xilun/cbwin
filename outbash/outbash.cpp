@@ -92,6 +92,38 @@ static const wchar_t* get_cmd_line_params()
     return p; // pointer to the first param (if any) in the command line
 }
 
+static std::wstring wrap_cmd_line(unsigned port)
+{
+    const wchar_t* p = get_cmd_line_params();
+
+    /*
+    outbash => bash.exe -c "OUTBASH=4242 bash "
+    outbash params => bash.exe -c "OUTBASH=4242 bash <escaped(params)>"
+    outbash ~ params => bash.exe ~ - c "OUTBASH=4242 bash <escaped(params)>"
+    */
+
+    const bool has_bash_exe_tilde = (p[0] == L'~')
+                                    && (is_cmd_line_sep(p[1]) || !p[1]);
+    if (has_bash_exe_tilde) {
+        p++;
+        while (is_cmd_line_sep(*p))
+            p++;
+    }
+
+    std::wstring new_params_line = has_bash_exe_tilde ? L"~ -c \"OUTBASH_PORT=" : L"-c \"OUTBASH_PORT=";
+    new_params_line += std::to_wstring(port);
+    new_params_line += L" bash ";
+    while (*p) {
+        if (*p == L'$' || *p == L'`' || *p == L'\\' || *p == L'"')
+            new_params_line.push_back(L'\\');
+        new_params_line.push_back(*p);
+        p++;
+    }
+    new_params_line += L"\"";
+
+    return new_params_line;
+}
+
 static std::wstring get_comspec()
 {
     wchar_t buf[MAX_PATH+1];
@@ -786,34 +818,6 @@ private:
     CUniqueSocket   m_usock;
 };
 
-// return temporary filename (in UTF-8)
-static std::string get_temp_filename(DWORD unique)
-{
-    #define TMP_BUFLEN (MAX_PATH+2)
-    wchar_t w_temp_path[TMP_BUFLEN];
-    DWORD res = ::GetTempPathW(TMP_BUFLEN, w_temp_path);
-    if (res == 0) { Win32_perror("outbash: GetTempPath"); std::exit(EXIT_FAILURE); }
-    return utf::narrow(w_temp_path) + "outbash." + std::to_string((unsigned int)unique);
-}
-
-// convert Win32 filename to WSL filename (both in UTF-8)
-static std::string convert_to_wsl_filename(const std::string& win32_filename)
-{
-    if (win32_filename.length() <= 3
-        || !is_ascii_letter(win32_filename[0])
-        || win32_filename[1] != ':'
-        || win32_filename[2] != '\\') {
-        std::fprintf(stderr, "outbash: Unable to convert filename to WSL: %s\n", win32_filename.c_str());
-        std::exit(EXIT_FAILURE);
-    }
-    std::string result = "/mnt/";
-    result += to_ascii_lower(win32_filename[0]);
-    result += '/';
-    result += &win32_filename[3];
-    std::replace(result.begin(), result.end(), '\\', '/');
-    return result;
-}
-
 struct ThreadConnection {
     std::unique_ptr<CConnection>    m_pConn;
     std::thread                     m_thread;
@@ -878,24 +882,13 @@ int main()
 
     CUniqueHandle accept_event = sock.create_auto_event(FD_ACCEPT);
 
-    std::string tmp_filename = get_temp_filename(GetCurrentProcessId());
-    std::string wsl_tmp_filename = convert_to_wsl_filename(tmp_filename);
-    std::FILE *f = _wfopen(utf::widen(tmp_filename).c_str(), L"wb");
-    if (!f) { std::fprintf(stderr, "outbash: could not open temporary file %S\n", utf::widen(tmp_filename).c_str()); std::exit(EXIT_FAILURE); }
-    std::fprintf(f, "export OUTBASH_PORT=%u\n", (unsigned)ntohs(serv_addr.sin_port));
-    std::fprintf(f, ". /etc/bash.bashrc\n");
-    std::fprintf(f, ". ~/.bashrc\n");
-    std::fclose(f);
-    // XXX check fprintf/fclose errors
-
     PROCESS_INFORMATION pi;
     if (start_command(
-            utf::widen("bash --rcfile \"" + wsl_tmp_filename + "\" ") + get_cmd_line_params(),
+            utf::widen("bash ") + wrap_cmd_line((unsigned)ntohs(serv_addr.sin_port)),
             nullptr, nullptr, nullptr, 0,
-            pi) != 0) {
-        _wremove(utf::widen(tmp_filename).c_str());
+            pi) != 0)
         std::exit(EXIT_FAILURE);
-    }
+
     ::CloseHandle(pi.hThread);
 
     std::vector<ThreadConnection> vTConn;
@@ -958,7 +951,6 @@ int main()
             }
         case WAIT_OBJECT_0:
             ::CloseHandle(pi.hProcess);
-            _wremove(utf::widen(tmp_filename).c_str());
             std::quick_exit(EXIT_SUCCESS);
             break;
         }
