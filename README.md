@@ -5,6 +5,7 @@ main features:
 
 * Win32 command line tools in the console, invoked from WSL
 * Win32 command line tools with redirections to WSL (stdin/stdout/stderr to or from pipe/file)
+* suspend/resume propagation (Ctrl-Z suspends the Win32 processes, `fg` resumes them)
 * exit codes propagation
 * launch "detached" GUI Windows programs (uses `start` of `cmd`)
 
