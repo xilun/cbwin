@@ -72,57 +72,104 @@ static bool is_cmd_line_sep(wchar_t c)
     return c == L' ' || c == L'\t';
 }
 
-static bool startswith(const std::string& s, const std::string& start)
+template <typename CharT>
+static bool startswith(const std::basic_string<CharT>& s, const std::basic_string<CharT>& start)
 {
     return !s.compare(0, start.size(), start);
 }
 
-static const wchar_t* get_cmd_line_params()
+class CCmdLine
 {
-    const wchar_t* p = GetCommandLineW();
-    if (p == nullptr)
-        return L"";
-    // we use the same rules as the CRT parser to delimit argv[0]:
-    for (bool quoted = false; *p != L'\0' && (quoted || !is_cmd_line_sep(*p)); p++) {
-        if (*p == L'"')
-            quoted = !quoted;
+public:
+    CCmdLine()
+      : m_escaped_bash_cmd_line_params(),
+        m_has_bash_exe_tilde(false),
+        m_is_session(false)
+    {
+        const wchar_t* p = get_cmd_line_params();
+
+        if (startswith<wchar_t>(p, L"--outbash-session")
+            && (is_cmd_line_sep(p[wcslen(L"--outbash-session")])
+                || p[wcslen(L"--outbash-session")] == L'\0')) {
+            m_is_session = true;
+            p += wcslen(L"--outbash-session");
+            while (is_cmd_line_sep(*p))
+                p++;
+        }
+
+        m_has_bash_exe_tilde = (p[0] == L'~')
+            && (is_cmd_line_sep(p[1]) || !p[1]);
+        if (m_has_bash_exe_tilde) {
+            p++;
+            while (is_cmd_line_sep(*p))
+                p++;
+        }
+
+        m_escaped_bash_cmd_line_params = bash_escape_within_double_quotes(p);
     }
-    while (is_cmd_line_sep(*p))
-        p++;
-    return p; // pointer to the first param (if any) in the command line
-}
 
-static std::wstring wrap_cmd_line(unsigned port)
-{
-    const wchar_t* p = get_cmd_line_params();
+    std::wstring new_cmd_line(unsigned port)
+    {
+        std::wstring new_params_line = m_has_bash_exe_tilde ? L"~ -c \"" : L"-c \"";
 
-    /*
-    outbash => bash.exe -c "OUTBASH=4242 bash "
-    outbash params => bash.exe -c "OUTBASH=4242 bash <escaped(params)>"
-    outbash ~ params => bash.exe ~ - c "OUTBASH=4242 bash <escaped(params)>"
-    */
+        if (!m_is_session) {
 
-    const bool has_bash_exe_tilde = (p[0] == L'~')
-                                    && (is_cmd_line_sep(p[1]) || !p[1]);
-    if (has_bash_exe_tilde) {
-        p++;
+            /* non session outbash:
+             * outbash => bash.exe -c "OUTBASH=4242 bash "
+             * outbash params => bash.exe -c "OUTBASH=4242 bash <escaped(params)>"
+             * outbash ~ params => bash.exe ~ - c "OUTBASH=4242 bash <escaped(params)>"
+             */
+
+            new_params_line += L"OUTBASH_PORT=" + std::to_wstring(port) + L" bash " + m_escaped_bash_cmd_line_params;
+
+        } else {
+
+            /* session outbash:
+             * outbash --outbash-session => bash.exe -c "mkdir -p ~/.config/cbwin ; echo 4242 > ~/.config/cbwin/outbash_port ; OUTBASH=4242 exec bash "
+             */
+
+            new_params_line += L"mkdir -p ~/.config/cbwin ; echo " + std::to_wstring(port)
+                                + L" > ~/.config/cbwin/outbash_port ; OUTBASH_PORT=" + std::to_wstring(port)
+                                + L" exec bash " + m_escaped_bash_cmd_line_params;
+        }
+
+        new_params_line += L"\"";
+        return new_params_line;
+    }
+
+private:
+    static const std::wstring bash_escape_within_double_quotes(const wchar_t* p)
+    {
+        std::wstring result = L"";
+        while (*p) {
+            if (*p == L'$' || *p == L'`' || *p == L'\\' || *p == L'"')
+                result.push_back(L'\\');
+            result.push_back(*p);
+            p++;
+        }
+        return result;
+    }
+
+    static const wchar_t* get_cmd_line_params()
+    {
+        const wchar_t* p = GetCommandLineW();
+        if (p == nullptr)
+            return L"";
+        // we use the same rules as the CRT parser to delimit argv[0]:
+        for (bool quoted = false; *p != L'\0' && (quoted || !is_cmd_line_sep(*p)); p++) {
+            if (*p == L'"')
+                quoted = !quoted;
+        }
         while (is_cmd_line_sep(*p))
             p++;
+        return p; // pointer to the first param (if any) in the command line
     }
 
-    std::wstring new_params_line = has_bash_exe_tilde ? L"~ -c \"OUTBASH_PORT=" : L"-c \"OUTBASH_PORT=";
-    new_params_line += std::to_wstring(port);
-    new_params_line += L" bash ";
-    while (*p) {
-        if (*p == L'$' || *p == L'`' || *p == L'\\' || *p == L'"')
-            new_params_line.push_back(L'\\');
-        new_params_line.push_back(*p);
-        p++;
-    }
-    new_params_line += L"\"";
-
-    return new_params_line;
-}
+private:
+    std::wstring    m_escaped_bash_cmd_line_params;
+    bool            m_has_bash_exe_tilde;
+    bool            m_is_session;
+};
 
 static std::wstring get_comspec()
 {
@@ -624,17 +671,17 @@ private:
 
                     if (line == "")
                         break;
-                    else if (startswith(line, "run:"))
+                    else if (startswith<char>(line, "run:"))
                         wrun = utf::widen(&line[4]);
-                    else if (startswith(line, "cd:"))
+                    else if (startswith<char>(line, "cd:"))
                         wcd = utf::widen(&line[3]);
-                    else if (startswith(line, "env:"))
+                    else if (startswith<char>(line, "env:"))
                         vars_cp()->set_from_utf8(&line[4]);
-                    else if (startswith(line, "stdin:"))
+                    else if (startswith<char>(line, "stdin:"))
                         inst_redir()->parse_redir_param(StdRedirects::REDIR_STDIN, &line[6]);
-                    else if (startswith(line, "stdout:"))
+                    else if (startswith<char>(line, "stdout:"))
                         inst_redir()->parse_redir_param(StdRedirects::REDIR_STDOUT, &line[7]);
-                    else if (startswith(line, "stderr:"))
+                    else if (startswith<char>(line, "stderr:"))
                         inst_redir()->parse_redir_param(StdRedirects::REDIR_STDERR, &line[7]);
                     else if (line == "silent_breakaway:1")
                         silent_breakaway = true;
@@ -884,7 +931,7 @@ int main()
 
     PROCESS_INFORMATION pi;
     if (start_command(
-            utf::widen("bash ") + wrap_cmd_line((unsigned)ntohs(serv_addr.sin_port)),
+            utf::widen("bash ") + CCmdLine().new_cmd_line((unsigned)ntohs(serv_addr.sin_port)),
             nullptr, nullptr, nullptr, 0,
             pi) != 0)
         std::exit(EXIT_FAILURE);
