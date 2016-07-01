@@ -38,6 +38,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <pwd.h>
 
 #define MY_DYNAMIC_PATH_MAX (32768*3 + 32)
 #define MNT_DRIVE_FS_PREFIX "/mnt/"
@@ -728,6 +729,57 @@ static void tstop_handler(int n)
 //
 enum state_e { RUNNING, SUSPEND_PENDING, DYING, TERMINATED };
 
+char *get_homedir_dup(void)
+{
+    char *homedir = getenv("HOME");
+    if (homedir)
+        return strdup(homedir);
+    struct passwd *p = getpwuid(getuid());
+    if (!p)
+        return NULL;
+    return strdup(p->pw_dir);
+}
+
+void get_outbash_infos(int *port, bool *force_redirects)
+{
+    const char *origin = "OUTBASH_PORT environment variable";
+    char *outbash_port = getenv("OUTBASH_PORT");
+
+    char buffer[16] = { 0 };
+
+    if (outbash_port == NULL) {
+        char *homedir = get_homedir_dup();
+        if (!homedir) {
+            dprintf(STDERR_FILENO, "%s: OUTBASH_PORT environment variable not set, and could not get home directory\n", tool_name);
+            terminate_nocore();
+        }
+#define CONF_SESSION_PORT_FILE "/.config/cbwin/outbash_port"
+        char *conf_file_path = xmalloc(strlen(homedir) + strlen(CONF_SESSION_PORT_FILE) + 1);
+        strcpy(conf_file_path, homedir);
+        strcat(conf_file_path, CONF_SESSION_PORT_FILE);
+        FILE *f = fopen(conf_file_path, "r");
+        if (!f || !fread(buffer, 1, 15, f)) {
+            dprintf(STDERR_FILENO, "%s: OUTBASH_PORT environment variable not set, and could not read %s\n", tool_name, conf_file_path);
+            terminate_nocore();
+        }
+        fclose(f);
+        free(conf_file_path);
+        free(homedir);
+
+        outbash_port = buffer;
+        *force_redirects = true;
+        origin = "~" CONF_SESSION_PORT_FILE;
+    }
+
+    int p = atoi(outbash_port);
+    if (p < 1 || p > 65535) {
+        dprintf(STDERR_FILENO, "%s: %s does not contain a valid port number\n", tool_name, origin);
+        terminate_nocore();
+    }
+
+    *port = p;
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 1) {
@@ -756,6 +808,9 @@ int main(int argc, char *argv[])
     string_append(&outbash_command, cwd_win32); free(cwd_win32);
 
     bool force_redirects = false;
+
+    int port;
+    get_outbash_infos(&port, &force_redirects);
 
     shift(&argc, &argv);
     while (argc && !strncmp(argv[0], "--", 2)) {
@@ -787,16 +842,6 @@ int main(int argc, char *argv[])
     decide_will_redirect(STDOUT_FILENO, force_redirects);
     decide_will_redirect(STDERR_FILENO, force_redirects);
 
-    char *outbash_port = getenv("OUTBASH_PORT");
-    if (outbash_port == NULL) {
-        dprintf(STDERR_FILENO, "%s: OUTBASH_PORT environment variable not set\n", tool_name);
-        terminate_nocore();
-    }
-    int port = atoi(outbash_port);
-    if (port < 1 || port > 65535) {
-        dprintf(STDERR_FILENO, "%s: OUTBASH_PORT environment variable does not contain a valid port number\n", tool_name);
-        terminate_nocore();
-    }
     int sock_ctrl = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock_ctrl < 0) {
         dprintf(STDERR_FILENO, "%s: socket() failed: %s\n", tool_name, my_strerror(errno));
