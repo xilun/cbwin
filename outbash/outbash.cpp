@@ -186,6 +186,20 @@ static std::wstring get_comspec()
 }
 static const std::wstring comspec = get_comspec();
 
+static std::wstring get_userprofile()
+{
+    wchar_t buf[MAX_PATH+1];
+    UINT res = ::GetEnvironmentVariableW(L"USERPROFILE", buf, MAX_PATH+1);
+    if (res == 0 && ::GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
+        std::fprintf(stderr, "outbash: warning: USERPROFILE environment variable not found\n");
+        return L"";
+    } else {
+        if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "outbash: GetEnvironmentVariable USERPROFILE error\n"); std::abort(); }
+        return buf;
+    }
+}
+static const std::wstring userprofile = get_userprofile();
+
 int wstr_case_ascii_ncmp(const wchar_t* s1, const wchar_t* s2, size_t n)
 {
     wchar_t c1, c2;
@@ -227,12 +241,17 @@ static int start_command(std::wstring cmdline,
 
     const wchar_t* wdir = nullptr;
     if (dir != nullptr && *dir != L'\0') {
-        // CreateProcess will happily use a relative, but we don't want to
-        if (!path_is_really_absolute(dir)) {
+        if (dir[0] == L'~' && dir[1] == L'\0') {
+            if (userprofile.empty()) {
+                std::fprintf(stderr, "outbash: start_command: %%USERPROFILE%% required but not found\n");
+                return 1;
+            }
+            wdir = userprofile.c_str();
+        } else if (!path_is_really_absolute(dir)) { // CreateProcess will happily use a relative, but we don't want to
             std::fprintf(stderr, "outbash: start_command: non-absolute directory parameter: %S\n", dir);
             return 1;
-        }
-        wdir = dir;
+        } else
+            wdir = dir;
     }
 
     const wchar_t* module = NULL;

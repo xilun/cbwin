@@ -793,27 +793,33 @@ int main(int argc, char *argv[])
     fill_std_fd_info_identity(STDOUT_FILENO);
     fill_std_fd_info_identity(STDERR_FILENO);
 
-    char* cwd = agetcwd();
-    if (!((strncmp(cwd, MNT_DRIVE_FS_PREFIX, strlen(MNT_DRIVE_FS_PREFIX)) == 0)
-          && cwd[strlen(MNT_DRIVE_FS_PREFIX)] >= 'a'
-          && cwd[strlen(MNT_DRIVE_FS_PREFIX)] <= 'z'
-          && (cwd[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '/'
-              || cwd[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '\0'))) {
-        dprintf(STDERR_FILENO, "%s: can't translate a WSL VolFs path to a Win32 one\n", tool_name);
-        terminate_nocore();
-    }
-    char* cwd_win32 = convert_drive_fs_path_to_win32(cwd);
-    free(cwd); cwd = NULL;
-
-    struct string outbash_command = string_create("cd:");
-    string_append(&outbash_command, cwd_win32); free(cwd_win32);
-
     bool force_redirects = false;
 
     int port;
     get_outbash_infos(&port, &force_redirects);
 
+    struct string outbash_command = string_create("cd:");
+
     shift(&argc, &argv);
+    if (argc && argv[0][0] == ':' && argv[0][1] == '\0') {
+        shift(&argc, &argv);
+        string_append(&outbash_command, "~");
+    } else {
+        char* cwd = agetcwd();
+        if (!((strncmp(cwd, MNT_DRIVE_FS_PREFIX, strlen(MNT_DRIVE_FS_PREFIX)) == 0)
+              && cwd[strlen(MNT_DRIVE_FS_PREFIX)] >= 'a'
+              && cwd[strlen(MNT_DRIVE_FS_PREFIX)] <= 'z'
+              && (cwd[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '/'
+                  || cwd[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '\0'))) {
+            dprintf(STDERR_FILENO, "%s: can't translate a WSL VolFs path to a Win32 one\n", tool_name);
+            terminate_nocore();
+        }
+        char* cwd_win32 = convert_drive_fs_path_to_win32(cwd);
+        string_append(&outbash_command, cwd_win32);
+        free(cwd_win32);
+        free(cwd);
+    }
+
     while (argc && !strncmp(argv[0], "--", 2)) {
 
         if (!strcmp(argv[0], "--")) {
