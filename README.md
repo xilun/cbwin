@@ -1,4 +1,5 @@
 # cbwin
+
 Launch Windows programs from "Bash on Ubuntu on Windows" (WSL) -- or anything doing TCP on 127.0.0.1
 
 main features:
@@ -9,20 +10,36 @@ main features:
 * exit codes propagation
 * launch "detached" GUI Windows programs (uses `start` of `cmd`)
 
+
 # installation
 
-[Binary releases](https://github.com/xilun/cbwin/releases)
+[Binary releases](https://github.com/xilun/cbwin/releases):
+
+1. In the unpacked binary archive, launch `outbash.exe`
+2. Do: `sudo ./install.sh`
+3. In Windows, copy `outbash.exe` where you want, usually somewhere in your `%PATH%`
+4. In WSL sessions launched by `outbash.exe`, you can now call Windows programs with the `wrun`, `wcmd`, and `wstart` commands.
 
 Or from source:
 
-1. Build `outbash.exe` (for example with Visual C++ 2015) and use it instead of `bash.exe`
+1. Build `outbash.exe` with Visual C++ 2015 and use it instead of `bash.exe`
 2. In `caller/`, build `wrun`, `wcmd`, and `wstart` (with `./build.sh`)
-3. Install the binaries in `/usr/local/bin` (with `sudo ./install.sh`)
+3. Install `wrun`, `wcmd`, and `wstart` in `/usr/local/bin` (with `sudo ./install.sh`)
 4. In WSL sessions launched by `outbash.exe`, you can now call Windows programs with the `wrun`, `wcmd`, and `wstart` commands.
 
+
 # examples
-`wcmd` launches a command with `cmd`, while `wstart` does likewise but also prefixes it with `start`.
-`wrun` launches the command line directly with `CreateProcess`, without using `cmd`.
+
+`wcmd` launches a command with `cmd`. `wrun` launches the command line directly with `CreateProcess`,
+without using `cmd`. `wstart` launches a detached command (with `start` of `cmd`).
+
+Windows processes and their children launched with `wcmd` or `wrun` are handled in a Windows Job, and
+suspending the WSL caller process (`wcmd` or `wrun`) results in the suspension of all the Windows
+processes in the corresponding Job. Also, when the launched process terminates, all its direct and
+indirect children are killed. This means that trying to manually do e.g. `wcmd start notepad` won't yield
+useful results, because notepad will be killed just after having been launched -- `wstart` must be used
+in this case.
+
 If in doubt use `wcmd` to launch Win32 command line tools, and `wstart` to launch graphical applications.
 
     xilun@WINWIN:/mnt/c/Users$ uname -a
@@ -56,10 +73,6 @@ You can redirect input and output (avoid doing that with `wstart`, it would beha
     c:\Users>
     xilun@WINWIN:/mnt/c/Users$ 
 
-Note that it is not recommended to redirect Win32 processes that are launched in the "background" (like with
-`wstart` - more precisely if any Win32 process is created by the one you launched with its standard handles
-inherited and the command does not wait for its termination). This might change in a future release.
-
 The environment block for launched processes is the one `outbash.exe` was started with, but it can be modified for
 individual commands. The `--env` option allows to set environment variables for the command. Parameters after this
 option are interpreted as environment variable definitions until one starts with "`--`" or a parameter does not contain
@@ -81,7 +94,8 @@ command line.
     TMP=C:\Users\xilun\AppData\Local\Temp
     [...]
 
-Other example to launch `msbuild` to rebuild `outbash.exe`, which shows that return codes are propagated:
+Other example to launch `msbuild` to rebuild `outbash.exe`, which shows that return codes are propagated
+(running from another copy of `outbash.exe`, its impossible to overwrite it when in use):
 
     xilun@WINWIN:/mnt/c/Users/xilun/Documents/Projects/cbwin/vs$ wcmd '"C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" amd64 && msbuild /t:Rebuild /p:Configuration=Release /m cbwin.sln'
     Microsoft (R) Build Engine, version 14.0.25123.0
@@ -108,12 +122,9 @@ Other example to launch `msbuild` to rebuild `outbash.exe`, which shows that ret
     1
     xilun@WINWIN:/mnt/c/Users/xilun/Documents/Projects/cbwin/vs$ 
 
-Unfortunately Windows does not allow to replace open files, and that includes `.exe` that have been used to launch
-a process that is still running (the above session was launched from an `outbash.exe` copied out of the `Release/`
-directory, otherwise it would have failed). Win32 also has no equivalent of `exec()`, so we would not be able to
-update a running `outbash.exe` anyway.
 
 # warnings
+
 For now running *interactive* Win32 console tools in the same console as a WSL bash session (for example: `wrun cmd`
 or `wcmd python`) does not work well. The main problems seem to be related to the console switching internal modes
 (charset, but not only) between the Win32 and the WSL world. I don't know yet if something nice enough to use in that
@@ -122,8 +133,8 @@ not working well, for now, with ConEmu or Bitvise SSH Server - but I'm not reall
 
 Anybody with access to TCP 127.0.0.1 can launch anything with the privileges of the user who launched `outbash.exe`.
 This might not be an issue if you are the only user of your computer. This might however break the WSL security model
-(once it is properly implemented by MS), but if you are only using separation between the WSL root and user to avoid
-casual mistakes and not for strong security purposes this is also not an issue.
+(access control within WSL using Linux accounts), but if you are only using separation between the WSL root and user
+to avoid casual mistakes and not for strong security purposes this is also not an issue.
 
 It is an unfinished work in progress. There are various stuff not-implemented (CRT compatible escaping of the command
 line args, trying to capture/restore the environment to easily do builds...)
