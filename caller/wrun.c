@@ -259,7 +259,7 @@ struct std_fd_info_struct {
     int fd;
     bool is_bad;
     bool is_dev_null;
-    bool is_a_tty;
+    bool is_a_real_tty;
     bool is_socket;
     struct stat stbuf;
 
@@ -296,7 +296,8 @@ static void fill_std_fd_info_identity(int fd)
     }
 
     if (isatty(info->fd)) {
-        info->is_a_tty = true;
+        if (strncmp(ttyname(fd), "/dev/tty", strlen("/dev/tty")) == 0)
+            info->is_a_real_tty = true;
         return;
     }
 
@@ -332,7 +333,7 @@ static void decide_will_redirect(int stdfd, bool force)
 {
     assert(stdfd >= 0);
     assert(stdfd < 3);
-    std_fd_info[stdfd].redirect = force || !std_fd_info[stdfd].is_a_tty;
+    std_fd_info[stdfd].redirect = force || !std_fd_info[stdfd].is_a_real_tty;
 }
 
 static bool needs_socket_redirect(int stdfd)
