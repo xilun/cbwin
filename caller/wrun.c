@@ -193,7 +193,7 @@ static void string_reserve(struct string* s, size_t new_capacity)
     }
 }
 
-static void string_quad_grow(struct string* s, size_t append_length)
+static void string_exp_grow(struct string* s, size_t append_length)
 {
     if (s->length + append_length > s->capacity) {
         size_t new_capa = s->length + append_length;
@@ -206,7 +206,7 @@ static void string_quad_grow(struct string* s, size_t append_length)
 static void string_append(struct string* restrict s, const char* restrict rhs)
 {
     size_t rhs_len = strlen(rhs);
-    string_quad_grow(s, rhs_len);
+    string_exp_grow(s, rhs_len);
     memcpy(&s->str[s->length], rhs, rhs_len + 1);
     s->length += rhs_len;
 }
