@@ -59,7 +59,7 @@ enum // values must not change
 enum // values must not change
 {
     JPH_HUnknown    = 0,
-    JPH_HOpenFailed = 1,    // for another reason than if the process died
+    JPH_HOpenFailed = 1,    // for another reason than simply if the process died
 };
 
 static bool is_real_handle(HANDLE h)

@@ -47,6 +47,7 @@
 #include "win_except.h"
 #include "job.h"
 #include "ntsuspend.h"
+#include "handle.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -323,53 +324,6 @@ ssize_t send_all(const SOCKET sockfd, const void *buffer, const size_t length, c
     assert(where == length);
     return (ssize_t)where;
 }
-
-class CUniqueHandle
-{
-public:
-    CUniqueHandle() noexcept : m_handle(NULL) {}
-    explicit CUniqueHandle(HANDLE h) noexcept : m_handle(h) {}
-    CUniqueHandle(HANDLE h, const char* checked_origin) : m_handle(h)
-    {
-        if (!is_valid())
-            throw_last_error(checked_origin);
-    }
-    CUniqueHandle(const CUniqueHandle&) = delete;
-    CUniqueHandle& operator=(const CUniqueHandle&) = delete;
-    CUniqueHandle(CUniqueHandle&& other) noexcept : m_handle(other.m_handle) { other.m_handle = NULL; }
-    CUniqueHandle& operator=(CUniqueHandle&& other) noexcept
-    {
-        if (this != &other) {
-            if (is_valid()) ::CloseHandle(m_handle);
-            m_handle = other.m_handle;
-            other.m_handle = NULL;
-        }
-        return *this;
-    }
-    ~CUniqueHandle() noexcept { if (is_valid()) ::CloseHandle(m_handle); }
-    void close() noexcept
-    {
-        if (is_valid()) {
-            ::CloseHandle(m_handle);
-            m_handle = NULL;
-        }
-    }
-    HANDLE get_checked() const
-    {
-        if (!is_valid()) {
-            ::SetLastError(ERROR_INVALID_HANDLE);
-            throw_last_error("CUniqueHandle::get_checked");
-        }
-        return m_handle;
-    }
-    HANDLE get_unchecked() const noexcept { return m_handle; }
-    bool is_valid() const noexcept
-    {
-        return m_handle != NULL && m_handle != INVALID_HANDLE_VALUE;
-    }
-private:
-    HANDLE m_handle;
-};
 
 class CUniqueSocket
 {

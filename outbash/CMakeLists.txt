@@ -15,6 +15,7 @@ add_executable(outbash
                ntsuspend.cpp
                job.h
                job.cpp
+               handle.h
                outbash.cpp
                outbash.rc)
 
