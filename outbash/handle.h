@@ -20,6 +20,8 @@
  * SOFTWARE.
  */
 
+#pragma once
+
 #include <Windows.h>
 
 #include "win_except.h"
