@@ -238,7 +238,9 @@ CJobPidHandles::CJobPidHandles(HANDLE hJob)
             m_pHPidList = nullptr;
 
             if (last_err == ERROR_MORE_DATA) {
-                pid_list_buffer_size = return_length;
+                pid_list_buffer_size += (pid_list_buffer_size >> 3) & ~(size_t)7; // ensure geometric progression
+                if (return_length > pid_list_buffer_size)
+                    pid_list_buffer_size = return_length;
             } else {
                 throw_system_error("QueryInformationJobObject failed", last_err);
             }
