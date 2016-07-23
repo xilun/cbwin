@@ -89,11 +89,12 @@ public:
     {
         const wchar_t* p = get_cmd_line_params();
 
-        if (startswith<wchar_t>(p, L"--outbash-session")
-            && (is_cmd_line_sep(p[wcslen(L"--outbash-session")])
-                || p[wcslen(L"--outbash-session")] == L'\0')) {
+        const wchar_t* outbash_session = L"--outbash-session";
+        if (startswith<wchar_t>(p, outbash_session)
+            && (is_cmd_line_sep(p[wcslen(outbash_session)])
+                || p[wcslen(outbash_session)] == L'\0')) {
             m_is_session = true;
-            p += wcslen(L"--outbash-session");
+            p += wcslen(outbash_session);
             while (is_cmd_line_sep(*p))
                 p++;
         }
