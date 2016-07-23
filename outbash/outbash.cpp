@@ -83,20 +83,33 @@ class CCmdLine
 {
 public:
     CCmdLine()
-      : m_escaped_bash_cmd_line_params(),
+      : m_bash_launcher(get_default_bash_launcher()),
+        m_escaped_bash_cmd_line_params(),
         m_has_bash_exe_tilde(false),
         m_is_session(false)
     {
         const wchar_t* p = get_cmd_line_params();
 
-        const wchar_t* outbash_session = L"--outbash-session";
-        if (startswith<wchar_t>(p, outbash_session)
-            && (is_cmd_line_sep(p[wcslen(outbash_session)])
-                || p[wcslen(outbash_session)] == L'\0')) {
-            m_is_session = true;
-            p += wcslen(outbash_session);
-            while (is_cmd_line_sep(*p))
-                p++;
+        while (1) {
+            const wchar_t* new_p;
+            std::wstring param = parse_argv_param(p, &new_p);
+            if (!startswith<wchar_t>(param, L"--outbash-"))
+                break;
+
+            if (param == L"--outbash-session") {
+                m_is_session = true;
+            } else if (param == L"--outbash-launcher") {
+                m_bash_launcher = parse_argv_param(new_p, &new_p);
+                if (m_bash_launcher.empty() || m_bash_launcher.find(L'"') != std::wstring::npos) {
+                    std::fprintf(stderr, "outbash: invalid --outbash-launcher param %S\n", m_bash_launcher.c_str());
+                    std::exit(1);
+                }
+            } else {
+                std::fprintf(stderr, "outbash: unknown %S param\n", param.c_str());
+                std::exit(1);
+            }
+
+            p = new_p;
         }
 
         m_has_bash_exe_tilde = (p[0] == L'~')
@@ -112,7 +125,7 @@ public:
 
     std::wstring new_cmd_line(unsigned port)
     {
-        std::wstring new_params_line = m_has_bash_exe_tilde ? L"~ -c \"" : L"-c \"";
+        std::wstring cmd_line = L"\"" + m_bash_launcher + L"\" " + (m_has_bash_exe_tilde ? L"~ -c \"" : L"-c \"");
 
         if (!m_is_session) {
 
@@ -122,7 +135,7 @@ public:
              * outbash ~ params => bash.exe ~ - c "OUTBASH=4242 bash <escaped(params)>"
              */
 
-            new_params_line += L"OUTBASH_PORT=" + std::to_wstring(port) + L" bash " + m_escaped_bash_cmd_line_params;
+            cmd_line += L"OUTBASH_PORT=" + std::to_wstring(port) + L" bash " + m_escaped_bash_cmd_line_params;
 
         } else {
 
@@ -130,25 +143,58 @@ public:
              * outbash --outbash-session => bash.exe -c "mkdir -p ~/.config/cbwin ; echo 4242 > ~/.config/cbwin/outbash_port ; OUTBASH=4242 exec bash "
              */
 
-            new_params_line += L"mkdir -p ~/.config/cbwin ; echo " + std::to_wstring(port)
-                                + L" > ~/.config/cbwin/outbash_port ; OUTBASH_PORT=" + std::to_wstring(port)
-                                + L" exec bash " + m_escaped_bash_cmd_line_params;
+            cmd_line +=   L"mkdir -p ~/.config/cbwin ; echo " + std::to_wstring(port)
+                        + L" > ~/.config/cbwin/outbash_port ; OUTBASH_PORT=" + std::to_wstring(port)
+                        + L" exec bash " + m_escaped_bash_cmd_line_params;
         }
 
-        new_params_line += L"\"";
-        return new_params_line;
+        cmd_line += L"\"";
+        return cmd_line;
     }
 
 private:
-    static const std::wstring bash_escape_within_double_quotes(const wchar_t* p)
+    static std::wstring bash_escape_within_double_quotes(const wchar_t* p)
     {
-        std::wstring result = L"";
+        std::wstring result;
         while (*p) {
             if (*p == L'$' || *p == L'`' || *p == L'\\' || *p == L'"')
                 result.push_back(L'\\');
             result.push_back(*p);
             p++;
         }
+        return result;
+    }
+
+    static std::wstring parse_argv_param(const wchar_t* p, const wchar_t** next_p)
+    {
+        std::wstring result;
+        bool quoted = false;
+        while (true) {
+            int backslashes = 0;
+            while (*p == L'\\') {
+                p++;
+                backslashes++;
+            }
+            if (*p == L'"') {
+                result.append(backslashes / 2, L'\\');
+                if (backslashes % 2 == 0) {
+                    p++;
+                    if (!quoted || *p != L'"') {
+                        quoted = !quoted;
+                        continue; // while (true)
+                    }
+                }
+            } else {
+                result.append(backslashes, L'\\');
+            }
+            if (*p == L'\0' || (!quoted && is_cmd_line_sep(*p)))
+                break;
+            result.push_back(*p);
+            p++;
+        }
+        while (is_cmd_line_sep(*p))
+            p++;
+        *next_p = p;
         return result;
     }
 
@@ -167,7 +213,16 @@ private:
         return p; // pointer to the first param (if any) in the command line
     }
 
+    static std::wstring get_default_bash_launcher()
+    {
+        wchar_t buf[MAX_PATH+1];
+        UINT res = ::GetSystemDirectoryW(buf, MAX_PATH+1);
+        if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "outbash: GetSystemDirectory error\n"); std::abort(); }
+        return buf + std::wstring(L"\\bash.exe");
+    }
+
 private:
+    std::wstring    m_bash_launcher;
     std::wstring    m_escaped_bash_cmd_line_params;
     bool            m_has_bash_exe_tilde;
     bool            m_is_session;
@@ -906,7 +961,7 @@ int main()
 
     PROCESS_INFORMATION pi;
     if (start_command(
-            utf::widen("bash ") + CCmdLine().new_cmd_line((unsigned)ntohs(serv_addr.sin_port)),
+            CCmdLine().new_cmd_line((unsigned)ntohs(serv_addr.sin_port)),
             nullptr, nullptr, nullptr, 0,
             pi) != 0)
         std::exit(EXIT_FAILURE);
