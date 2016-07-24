@@ -1,0 +1,128 @@
+/*
+ * Copyright(c) 2016  Guillaume Knispel <xilun0@gmail.com>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#include <Windows.h>
+
+#include <new>
+#include <stdexcept>
+#include <cstdlib>
+
+#include "tcp_help.h"
+
+#pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "ws2_32.lib")
+
+
+namespace {
+
+
+#define MY_SIZEOF_TCPTABLE_OWNER_PID(X) (FIELD_OFFSET(MIB_TCPTABLE_OWNER_PID, table[0]) \
+                                         + ((X) * sizeof(MIB_TCPROW_OWNER_PID)))
+
+class CTcpPidTable {
+public:
+    CTcpPidTable()
+    {
+        DWORD result;
+        ULONG table_size = MY_SIZEOF_TCPTABLE_OWNER_PID(64);
+        do {
+            m_table = (PMIB_TCPTABLE_OWNER_PID)std::malloc(table_size); // XXX amortize
+            if (m_table == nullptr)
+                throw std::bad_alloc();
+            result = ::GetExtendedTcpTable(m_table, &table_size, FALSE, AF_INET,
+                                           TCP_TABLE_OWNER_PID_CONNECTIONS, 0);
+            if (result != NO_ERROR) {
+                std::free(m_table);
+                if (result != ERROR_INSUFFICIENT_BUFFER) {
+                    throw_system_error("GetExtendedTcpTable", result);
+                }
+            }
+        } while (result != NO_ERROR);
+    }
+    CTcpPidTable(CTcpPidTable&& other) : m_table(other.m_table) { other.m_table = nullptr; }
+    CTcpPidTable& operator=(CTcpPidTable&& other)
+    {
+        if (this != &other) {
+            std::free(m_table);
+            m_table = other.m_table;
+            other.m_table = nullptr;
+        }
+        return *this;
+    }
+    PMIB_TCPTABLE_OWNER_PID get()
+    {
+        if (m_table == nullptr)
+            throw std::logic_error("CTcpPidTable::get() -> nullptr");
+        return m_table;
+    }
+    ~CTcpPidTable() { std::free(m_table); }
+private:
+    PMIB_TCPTABLE_OWNER_PID m_table;
+};
+
+
+static bool tcp_caller_state_up(DWORD dwState)
+{
+    return dwState == MIB_TCP_STATE_ESTAB
+        || dwState == MIB_TCP_STATE_FIN_WAIT1   // the caller can half-close its own end of the socket
+        || dwState == MIB_TCP_STATE_FIN_WAIT2;
+}
+
+
+static DWORD Get_Peer_Pid_From_Tcp_Loopback_Ports(int local_port, int peer_port)
+{
+    const DWORD nl_loopback = htonl(INADDR_LOOPBACK);
+    const DWORD ns_peer_port = htons((u_short)peer_port);
+    const DWORD ns_local_port = htons((u_short)local_port);
+
+    CTcpPidTable table;
+    PMIB_TCPTABLE_OWNER_PID p_table_owner = table.get();
+
+    DWORD pid = 0;
+    for (std::size_t i = 0; i < p_table_owner->dwNumEntries; i++) {
+        if (p_table_owner->table[i].dwLocalAddr == nl_loopback
+              && (p_table_owner->table[i].dwLocalPort & 0xFFFF) == ns_peer_port // we want the PID of the peer
+              && p_table_owner->table[i].dwRemoteAddr == nl_loopback
+              && (p_table_owner->table[i].dwRemotePort & 0xFFFF) == ns_local_port
+              && tcp_caller_state_up(p_table_owner->table[i].dwState)) {
+            pid = p_table_owner->table[i].dwOwningPid;
+            break;
+        }
+    }
+    return pid;
+}
+
+
+} // namespace
+
+
+CUniqueHandle Get_Loopback_Tcp_Peer_Process_Handle(int local_port, int peer_port)
+{
+    DWORD pid = Get_Peer_Pid_From_Tcp_Loopback_Ports(local_port, peer_port);
+    if (pid == 0)
+        return CUniqueHandle();
+
+    return CUniqueHandle(::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
+}

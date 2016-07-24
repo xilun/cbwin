@@ -13,9 +13,13 @@ add_executable(outbash
                win_except.cpp
                ntsuspend.h
                ntsuspend.cpp
+               security.h
+               security.cpp
                job.h
                job.cpp
                handle.h
+               tcp_help.h
+               tcp_help.cpp
                outbash.cpp
                outbash.rc)
 

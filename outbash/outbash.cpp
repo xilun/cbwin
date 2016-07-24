@@ -48,6 +48,8 @@
 #include "job.h"
 #include "ntsuspend.h"
 #include "handle.h"
+#include "tcp_help.h"
+#include "security.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -584,12 +586,14 @@ private:
 class CConnection
 {
 public:
-    explicit CConnection(CUniqueSocket&& usock) noexcept : m_usock(std::move(usock)) {}
+    explicit CConnection(CUniqueSocket&& usock, int server_port) noexcept
+        : m_usock(std::move(usock)),
+          m_server_port(server_port) {}
 
     void run()
     {
         try {
-            CActiveConnection _con(m_usock);
+            CActiveConnection _con(m_usock, m_server_port);
             _con.run();
         } catch (const std::exception& e) {
             std::fprintf(stderr, "outbash: CConnection::run() exception: %s\n", e.what());
@@ -601,7 +605,10 @@ private:
     class CActiveConnection
     {
     public:
-        explicit CActiveConnection(CUniqueSocket& usock) noexcept : m_usock(usock), m_buf() {}
+        explicit CActiveConnection(CUniqueSocket& usock, int server_port) noexcept
+            : m_usock(usock),
+              m_buf(),
+              m_server_port(server_port) {}
 
         bool buf_get_line(std::string& out_line)
         {
@@ -695,6 +702,19 @@ private:
                 auto inst_redir = [&] { if (!redir) redir.reset(new OutbashStdRedirects); return redir.get(); };
                 bool silent_breakaway = false;
 
+                struct sockaddr_in caller_addr;
+                int namelen = sizeof(caller_addr);
+                if (::getpeername(m_usock.get(), (sockaddr *)&caller_addr, &namelen) != 0)
+                    throw_last_error("getsockname (caller)");
+
+                // scope for caller_process_handle
+                {
+                    CUniqueHandle caller_process_handle = Get_Loopback_Tcp_Peer_Process_Handle(m_server_port, ntohs(caller_addr.sin_port));
+                    bool allowed = check_caller_process_allowed(caller_process_handle);
+                    if (!allowed)
+                        throw std::runtime_error("access attempt not allowed");
+                }
+
                 while (1) {
                     std::string line = recv_line();
 
@@ -719,12 +739,6 @@ private:
                 ctrl_ev = m_usock.create_manual_event(FD_CLOSE);
 
                 if (redir.get()) {
-                    struct sockaddr_in caller_addr;
-                    int namelen = sizeof(caller_addr);
-                    if (::getpeername(m_usock.get(), (sockaddr *)&caller_addr, &namelen) != 0) {
-                        Win32_perror("outbash: getsockname (caller)");
-                        caller_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // fallback
-                    }
                     redir.get()->initiate_connections(caller_addr.sin_addr.s_addr);
                     redir.get()->complete_connections(ctrl_ev);
                 }
@@ -889,10 +903,12 @@ private:
     private:
         CUniqueSocket&  m_usock;
         std::string     m_buf;
+        int             m_server_port;
     };
 
 private:
     CUniqueSocket   m_usock;
+    int             m_server_port;
 };
 
 struct ThreadConnection {
@@ -955,13 +971,15 @@ int main()
     int namelen = sizeof(serv_addr);
     if (::getsockname(sock.get(), (sockaddr *)&serv_addr, &namelen) != 0) { Win32_perror("outbash: getsockname"); std::exit(EXIT_FAILURE); }
 
+    const int server_port = ntohs(serv_addr.sin_port);
+
     if (::listen(sock.get(), SOMAXCONN_HINT(600)) != 0) { Win32_perror("outbash: listen"); std::exit(EXIT_FAILURE); }
 
     CUniqueHandle accept_event = sock.create_auto_event(FD_ACCEPT);
 
     PROCESS_INFORMATION pi;
     if (start_command(
-            CCmdLine().new_cmd_line((unsigned)ntohs(serv_addr.sin_port)),
+            CCmdLine().new_cmd_line((unsigned)server_port),
             nullptr, nullptr, nullptr, 0,
             pi) != 0)
         std::exit(EXIT_FAILURE);
@@ -1016,7 +1034,7 @@ int main()
                     CUniqueSocket usock(conn);
                     try {
                         usock.set_to_blocking();
-                        ThreadConnection tc{ std::make_unique<CConnection>(std::move(usock)), std::thread() };
+                        ThreadConnection tc{ std::make_unique<CConnection>(std::move(usock), server_port), std::thread() };
                         CConnection *pConnection = tc.m_pConn.get();
                         tc.m_thread = std::thread([=] { pConnection->run(); });
                         vTConn.push_back(std::move(tc));
