@@ -67,7 +67,7 @@ static CUniqueHandle get_current_process_token()
 {
     HANDLE hToken;
     if (!::OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken))
-        throw_last_error("current_user_sid: OpenProcessToken");
+        throw_last_error("get_current_process_token: OpenProcessToken");
     return CUniqueHandle(hToken);
 }
 
