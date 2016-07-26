@@ -710,6 +710,8 @@ private:
                 // scope for caller_process_handle
                 {
                     CUniqueHandle caller_process_handle = Get_Loopback_Tcp_Peer_Process_Handle(m_server_port, ntohs(caller_addr.sin_port));
+                    if (!caller_process_handle.is_valid())
+                        throw std::runtime_error("caller process is not accessible");
                     bool allowed = check_caller_process_allowed(caller_process_handle);
                     if (!allowed)
                         throw std::runtime_error("access attempt not allowed");
