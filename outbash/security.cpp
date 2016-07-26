@@ -43,6 +43,11 @@ static PSID psid_from_token_info_ptr(TOKEN_PRIMARY_GROUP* token_primary_group)
     return token_primary_group->PrimaryGroup;
 }
 
+static PSID psid_from_token_info_ptr(TOKEN_MANDATORY_LABEL* token_mandatory_label)
+{
+    return token_mandatory_label->Label.Sid;
+}
+
 template <typename TTokenType, TOKEN_INFORMATION_CLASS TTokenInfoClass>
 static std::string sid_from_token_info(HANDLE hToken)
 {
@@ -71,13 +76,17 @@ static CUniqueHandle get_current_process_token()
     return CUniqueHandle(hToken);
 }
 
-static std::string sddl_dacl_allow_user()
+static std::string sddl_allow_user_with_integrity()
 {
     CUniqueHandle token = get_current_process_token();
     std::string user_sid = sid_from_token_info<TOKEN_USER, TokenUser>(token.get_checked());
     // The primary group is essentially useless, except it is mandatory:
     std::string primary_group = sid_from_token_info<TOKEN_PRIMARY_GROUP, TokenPrimaryGroup>(token.get_unchecked());
-    return "O:" + user_sid + "G:" + primary_group + "D:(A;;GA;;;" + user_sid + ")";
+    std::string mandatory_label = sid_from_token_info<TOKEN_MANDATORY_LABEL, TokenIntegrityLevel>(token.get_unchecked());
+    return "O:" + user_sid
+         + "G:" + primary_group
+         + "D:(A;;GA;;;" + user_sid + ")"
+         + "S:(ML;;NWNRNX;;;" + mandatory_label + ")";
 }
 
 typedef std::unique_ptr<SECURITY_DESCRIPTOR, decltype(::LocalFree) *> TUniqueSecDescBase;
@@ -89,9 +98,10 @@ public:
 
 static PSECURITY_DESCRIPTOR create_user_only_sd()
 {
-    std::string dacl = sddl_dacl_allow_user();
+    std::string sddl = sddl_allow_user_with_integrity();
+    //printf("SDDL: %s\n", sddl.c_str());
     PSECURITY_DESCRIPTOR pRawSecDesc;
-    if (!::ConvertStringSecurityDescriptorToSecurityDescriptorA(dacl.c_str(),
+    if (!::ConvertStringSecurityDescriptorToSecurityDescriptorA(sddl.c_str(),
                                                                 SDDL_REVISION_1,
                                                                 &pRawSecDesc,
                                                                 NULL))

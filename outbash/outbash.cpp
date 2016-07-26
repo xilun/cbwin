@@ -750,10 +750,9 @@ private:
                 JOBOBJECT_EXTENDED_LIMIT_INFORMATION job_limit_infos;
                 ZeroMemory(&job_limit_infos, sizeof(job_limit_infos));
 
-                // * We are not trying to provide security about anything, so allowing the convenience
-                //   of *explicitely* breaking away from this job is better than pretending this will
-                //   not happen, because there are probably 100000 ways to create arbitrary processes
-                //   that survive the job even if breaking away is not allowed here.
+                // * Allowing the convenience of *explicitely* breaking away from this job is better than
+                //   pretending this will not happen, because there are probably 100000 ways to create
+                //   arbitrary processes that survive the job even if breaking away is not allowed here.
                 // * If we fail here with a C++ exception, or if the whole outbash process fails, let
                 //   the job automatically terminate. For now I just can't think of any good reason we
                 //   could let it continue to run, especially given breaking away is allowed.
