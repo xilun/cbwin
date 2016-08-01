@@ -38,26 +38,43 @@
 namespace {
 
 
-#define MY_SIZEOF_TCPTABLE_OWNER_PID(X) (FIELD_OFFSET(MIB_TCPTABLE_OWNER_PID, table[0]) \
-                                         + ((X) * sizeof(MIB_TCPROW_OWNER_PID)))
+#define MY_SIZEOF_TCPTABLE_OWNER_PID(X) ( FIELD_OFFSET(MIB_TCPTABLE_OWNER_PID, table[0])    \
+                                          + ((X) * sizeof(MIB_TCPROW_OWNER_PID)) + 8 )
+
+#define MY_ROUNDUP_TCPTABLE_OWNER_PID(bytes)                                                            \
+    ( ( ((bytes) + sizeof(MIB_TCPROW_OWNER_PID) - 9 - FIELD_OFFSET(MIB_TCPTABLE_OWNER_PID, table[0]))   \
+        / sizeof(MIB_TCPROW_OWNER_PID) * sizeof(MIB_TCPROW_OWNER_PID) )                                 \
+      + FIELD_OFFSET(MIB_TCPTABLE_OWNER_PID, table[0]) + 8 )
 
 class CTcpPidTable {
+    // GetExtendedTcpTable() sometimes fails for unknown reasons and returns 0xc0000001
+    // We limit the number of retries to max_ntfail_retries in that case.
+    static const int max_ntfail_retries = 5;
 public:
     CTcpPidTable()
     {
         DWORD result;
-        ULONG table_size = MY_SIZEOF_TCPTABLE_OWNER_PID(64);
+        DWORD table_size = MY_SIZEOF_TCPTABLE_OWNER_PID(64);
+        int nt_retries = max_ntfail_retries;
         do {
-            m_table = (PMIB_TCPTABLE_OWNER_PID)std::malloc(table_size); // XXX amortize
+            m_table = (PMIB_TCPTABLE_OWNER_PID)std::malloc(table_size);
             if (m_table == nullptr)
                 throw std::bad_alloc();
-            result = ::GetExtendedTcpTable(m_table, &table_size, FALSE, AF_INET,
-                                           TCP_TABLE_OWNER_PID_CONNECTIONS, 0);
+
+            DWORD new_table_size;
+            do {
+                new_table_size = table_size;
+                result = ::GetExtendedTcpTable(m_table, &new_table_size, FALSE, AF_INET,
+                                               TCP_TABLE_OWNER_PID_CONNECTIONS, 0);
+            } while (result == 0xc0000001 && nt_retries > 0 && nt_retries--);
+
             if (result != NO_ERROR) {
                 std::free(m_table);
-                if (result != ERROR_INSUFFICIENT_BUFFER) {
+                if (result != ERROR_INSUFFICIENT_BUFFER)
                     throw_system_error("GetExtendedTcpTable", result);
-                }
+                table_size = MY_ROUNDUP_TCPTABLE_OWNER_PID(table_size + (table_size >> 3));
+                if (new_table_size > table_size)
+                    table_size = new_table_size;
             }
         } while (result != NO_ERROR);
     }
