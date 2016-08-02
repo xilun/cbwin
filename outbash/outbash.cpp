@@ -20,9 +20,6 @@
  * SOFTWARE.
  */
 
-// WARNING: This program is unsafe if you have multiple users/accounts on the same computer!
-// It trusts anything that can connect in TCP to 127.0.0.1
-
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <Windows.h>
