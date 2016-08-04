@@ -249,6 +249,7 @@ static void check_argc(int argc)
 {
     if (argc < 1) {
         dprintf(STDERR_FILENO, "%s: no command\n", tool_name);
+        dprintf(STDERR_FILENO, "type %s --help for more information.\n", tool_name);
         terminate_nocore();
     }
 }
@@ -838,8 +839,24 @@ int main(int argc, char *argv[])
         } else if (!strcmp(argv[0], "--force-redirects")) {
             force_redirects = true;
             shift(&argc, &argv);
+        } else if (!strcmp(argv[0], "--help")) {
+            dprintf(STDERR_FILENO, "usage: %s COMMAND_TO_RUN_ON_WINDOWS [PARAM_1 ... PARAM_N]\n\n", tool_name);
+
+            dprintf(STDERR_FILENO,
+            "Run native Windows executables outside of WSL. The output will be shown inside of WSL.\n"
+            "For this to work, this must be called from outbash.exe\n"
+            "\n"
+            "There are three variations of this command: wcmd, wrun and wstart\n\n"
+
+            "wcmd   runs a Windows command with cmd.exe. Example: 'wcmd dir'\n\n"
+            "wrun   runs a Windows command using CreateProcess and waits for it to exit. Example: 'wrun notepad'\n\n"
+            "wstart runs a Windows command in background as using 'start' from cmd.exe . Example: 'wstart http://microsoft.com/'\n\n"
+            "for more info, check https://github.com/xilun/cbwin\n"
+            );
+            terminate_nocore();
         } else {
             dprintf(STDERR_FILENO, "%s: unknown command line option: %s\n", tool_name, argv[0]);
+            dprintf(STDERR_FILENO, "type %s --help for more information.\n", tool_name);
             terminate_nocore();
         }
     }
