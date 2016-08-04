@@ -843,14 +843,14 @@ int main(int argc, char *argv[])
             dprintf(STDERR_FILENO, "usage: %s COMMAND_TO_RUN_ON_WINDOWS [PARAM_1 ... PARAM_N]\n\n", tool_name);
 
             dprintf(STDERR_FILENO,
-            "Run native windows executables outside of WSL. The output will be shown inside of WSL.\n"
+            "Run native Windows executables outside of WSL. The output will be shown inside of WSL.\n"
             "For this to work, this must be called from outbash.exe\n"
             "\n"
             "There are three variations of this command: wcmd, wrun and wstart\n\n"
 
-            "wcmd   runs a windows command with wcmd. Example: 'wcmd dir'\n\n"
-            "wrun   runs a windows command using CreateProcess and waits for it to exit. Example: 'wcmd notepad'\n\n"
-            "wstart runs a windows in background, using to start.exe. Example: 'wstart http://microsoft.com/'\n\n"
+            "wcmd   runs a Windows command with wcmd. Example: 'wcmd dir'\n\n"
+            "wrun   runs a Windows command using CreateProcess and waits for it to exit. Example: 'wrun notepad'\n\n"
+            "wstart runs a Windows command in background as if one were using start.exe. Example: 'wstart http://microsoft.com/'\n\n"
             "for more info, check https://github.com/xilun/cbwin\n"
             );
             terminate_nocore();
