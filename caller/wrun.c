@@ -848,9 +848,9 @@ int main(int argc, char *argv[])
             "\n"
             "There are three variations of this command: wcmd, wrun and wstart\n\n"
 
-            "wcmd   runs a Windows command with wcmd. Example: 'wcmd dir'\n\n"
+            "wcmd   runs a Windows command with cmd.exe. Example: 'wcmd dir'\n\n"
             "wrun   runs a Windows command using CreateProcess and waits for it to exit. Example: 'wrun notepad'\n\n"
-            "wstart runs a Windows command in background as if one were using start.exe. Example: 'wstart http://microsoft.com/'\n\n"
+            "wstart runs a Windows command in background as using 'start' from cmd.exe . Example: 'wstart http://microsoft.com/'\n\n"
             "for more info, check https://github.com/xilun/cbwin\n"
             );
             terminate_nocore();
