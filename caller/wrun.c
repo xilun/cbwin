@@ -840,18 +840,31 @@ int main(int argc, char *argv[])
             force_redirects = true;
             shift(&argc, &argv);
         } else if (!strcmp(argv[0], "--help")) {
-            dprintf(STDERR_FILENO, "usage: %s COMMAND_TO_RUN_ON_WINDOWS [PARAM_1 ... PARAM_N]\n\n", tool_name);
+            dprintf(STDERR_FILENO, "usage: %s [OPTIONS] COMMAND_TO_RUN_ON_WINDOWS [PARAM_1 ... PARAM_N]\n\n", tool_name);
 
             dprintf(STDERR_FILENO,
             "Run native Windows executables outside of WSL. The output will be shown inside of WSL.\n"
             "For this to work, this must be called from outbash.exe\n"
             "\n"
-            "There are three variations of this command: wcmd, wrun and wstart\n\n"
-
-            "wcmd   runs a Windows command with cmd.exe. Example: 'wcmd dir'\n\n"
-            "wrun   runs a Windows command using CreateProcess and waits for it to exit. Example: 'wrun notepad'\n\n"
-            "wstart runs a Windows command in background as using 'start' from cmd.exe . Example: 'wstart http://microsoft.com/'\n\n"
+            "There are three variations of this command: wcmd, wrun and wstart\n"
+            "\n"
+            "wcmd   runs a Windows command with cmd.exe. Example: 'wcmd dir'\n"
+            "\n"
+            "wrun   runs a Windows command using CreateProcess and waits for it to exit. Example: 'wrun notepad'\n"
+            "\n"
+            "wstart runs a Windows command in background as using 'start' from cmd.exe . Example: 'wstart http://microsoft.com/'\n"
+            "\n"
             "for more info, check https://github.com/xilun/cbwin\n"
+            "\n"
+            "Options:\n"
+            "    --force-redirects\n"
+            "        Redirect standard input, output, and/or error through the caller tool even if\n"
+            "        they otherwise would be connected to the Win32 console.\n"
+            "        Try that option if the output of a Win32 console program is not correct, for\n"
+            "        example if consecutive lines are not correctly aligned.\n"
+            "        This can also help if the typed characters are not all interpreted correctly.\n"
+            "        However, the target program won't be able to use the Win32 console API anymore,\n"
+            "        so this mode has drawbacks: for example the output won't be colored.\n"
             );
             terminate_nocore();
         } else {
