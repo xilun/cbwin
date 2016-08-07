@@ -795,6 +795,7 @@ int main(int argc, char *argv[])
     fill_std_fd_info_identity(STDERR_FILENO);
 
     bool force_redirects = false;
+    bool silent_breakaway = (tool == TOOL_WSTART);
 
     int port;
     get_outbash_infos(&port, &force_redirects);
@@ -839,6 +840,9 @@ int main(int argc, char *argv[])
         } else if (!strcmp(argv[0], "--force-redirects")) {
             force_redirects = true;
             shift(&argc, &argv);
+        } else if (!strcmp(argv[0], "--silent-breakaway")) {
+            silent_breakaway = true;
+            shift(&argc, &argv);
         } else if (!strcmp(argv[0], "--help")) {
             dprintf(STDERR_FILENO, "usage: %s [OPTIONS] COMMAND_TO_RUN_ON_WINDOWS [PARAM_1 ... PARAM_N]\n\n", tool_name);
 
@@ -871,6 +875,14 @@ int main(int argc, char *argv[])
             "        outbash.exe uses its environment variables to launch commands, and this option\n"
             "        can be used to launch one with a modified environment.\n"
             "        Use 'wcmd --env VAR_1=VALUE_1 ... VAR_N=VALUE_N set' to control the result.\n"
+            "\n"
+            "    --silent-breakaway\n"
+            "        Child programs of the initial one won't be controlled by outbash.exe; they\n"
+            "        won't be suspended when the caller tool is, and they won't be killed when the\n"
+            "        caller tool or the initial program dies.\n"
+            "        This option is automatically activated when using 'wstart'.\n"
+            "        For 'wcmd' and 'wstart', the initial program is 'cmd.exe'.\n"
+            "        For 'wrun', the initial program is COMMAND_TO_RUN_ON_WINDOWS.\n"
             );
             terminate_nocore();
         } else {
@@ -915,6 +927,9 @@ int main(int argc, char *argv[])
     ask_redirect(&outbash_command, "\nstderr:", STDERR_FILENO,
                  (redirects & STDERR_NEEDS_SOCKET_REDIRECT) ? lsock_err.port : lsock_out.port);
 
+    if (silent_breakaway)
+        string_append(&outbash_command, "\nsilent_breakaway:1");
+
     switch (tool) {
     case TOOL_WRUN:
         string_append(&outbash_command, "\nrun:");
@@ -923,7 +938,7 @@ int main(int argc, char *argv[])
         string_append(&outbash_command, "\nrun:cmd /C ");
         break;
     case TOOL_WSTART:
-        string_append(&outbash_command, "\nsilent_breakaway:1\nrun:cmd /C start ");
+        string_append(&outbash_command, "\nrun:cmd /C start ");
         break;
     }
 
