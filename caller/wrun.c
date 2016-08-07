@@ -865,6 +865,12 @@ int main(int argc, char *argv[])
             "        This can also help if the typed characters are not all interpreted correctly.\n"
             "        However, the target program won't be able to use the Win32 console API anymore,\n"
             "        so this mode has drawbacks: for example the output won't be colored.\n"
+            "\n"
+            "    --env [VAR_1=VALUE_1 ... VAR_N=VALUE_N]\n"
+            "        Launch the Windows command with modified Windows environment variables.\n"
+            "        outbash.exe uses its environment variables to launch commands, and this option\n"
+            "        can be used to launch one with a modified environment.\n"
+            "        Use 'wcmd --env VAR_1=VALUE_1 ... VAR_N=VALUE_N set' to control the result.\n"
             );
             terminate_nocore();
         } else {
