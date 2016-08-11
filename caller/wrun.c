@@ -844,7 +844,7 @@ int main(int argc, char *argv[])
             silent_breakaway = true;
             shift(&argc, &argv);
         } else if (!strcmp(argv[0], "--help")) {
-            dprintf(STDERR_FILENO, "usage: %s [OPTIONS] COMMAND_TO_RUN_ON_WINDOWS [PARAM_1 ... PARAM_N]\n\n", tool_name);
+            dprintf(STDERR_FILENO, "usage: %s [:] [OPTIONS] COMMAND_TO_RUN_ON_WINDOWS [PARAM_1 ... PARAM_N]\n\n", tool_name);
 
             dprintf(STDERR_FILENO,
             "Run native Windows executables outside of WSL. The output will be shown inside of WSL.\n"
@@ -852,13 +852,19 @@ int main(int argc, char *argv[])
             "\n"
             "There are three variations of this command: wcmd, wrun and wstart\n"
             "\n"
-            "wcmd   runs a Windows command with cmd.exe. Example: 'wcmd dir'\n"
+            "  * wcmd   runs a Windows command with cmd.exe and waits for its completion.\n"
+            "           Example: 'wcmd dir'\n"
             "\n"
-            "wrun   runs a Windows command using CreateProcess and waits for it to exit. Example: 'wrun notepad'\n"
+            "  * wrun   runs a Windows command using CreateProcess and waits for it to exit.\n"
+            "           Example: 'wrun notepad'\n"
             "\n"
-            "wstart runs a Windows command in background as using 'start' from cmd.exe . Example: 'wstart http://microsoft.com/'\n"
+            "  * wstart runs a Windows command in background as using 'start' from cmd.exe.\n"
+            "           Example: 'wstart http://microsoft.com/'\n"
             "\n"
-            "for more info, check https://github.com/xilun/cbwin\n"
+            "Adding a \":\" as the first parameter of the caller tool will disregard the current WSL\n"
+            "working directory and launch the Windows command from %%USERPROFILE%%.\n"
+            "Example:   user@BOX:/proc$ wcmd : echo %%cd%%\n"
+            "           C:\\Users\\winuser\n"
             "\n"
             "Options:\n"
             "    --force-redirects\n"
@@ -883,6 +889,8 @@ int main(int argc, char *argv[])
             "        This option is automatically activated when using 'wstart'.\n"
             "        For 'wcmd' and 'wstart', the initial program is 'cmd.exe'.\n"
             "        For 'wrun', the initial program is COMMAND_TO_RUN_ON_WINDOWS.\n"
+            "\n"
+            "For more info, check https://github.com/xilun/cbwin\n"
             );
             terminate_nocore();
         } else {
