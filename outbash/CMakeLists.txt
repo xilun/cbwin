@@ -20,6 +20,7 @@ add_executable(outbash
                handle.h
                tcp_help.h
                tcp_help.cpp
+               resources.h
                outbash.cpp
                outbash.rc)
 

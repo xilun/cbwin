@@ -1,0 +1,6 @@
+#ifndef OUTBASH_RESOURCES_H
+#define OUTBASH_RESOURCES_H 1
+
+#define IDI_ICON1 101
+
+#endif /* OUTBASH_RESOURCES_H */
