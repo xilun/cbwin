@@ -964,8 +964,9 @@ int main(int argc, char *argv[])
 
     bool sep = false;
     for (int i = 0; i < argc; i++) {
-        if (sep) string_append(&outbash_command, " ");
+        if (sep) string_append(&outbash_command, " \"");
         string_append(&outbash_command, argv[i]);
+        if (sep) string_append(&outbash_command, "\"");
         sep = true;
     }
     string_append(&outbash_command, "\n\n");
