@@ -512,7 +512,7 @@ public:
                     set_same_as_other(REDIR_STDERR, REDIR_STDOUT);
                 } else {
                     CUniqueSocket sock(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-                    CUniqueHandle conn_ev = sock.create_auto_event(FD_CONNECT);
+                    CUniqueHandle conn_ev = sock.create_manual_event(FD_CONNECT);
                     struct sockaddr_in redir_addr;
                     std::memset(&redir_addr, 0, sizeof(redir_addr));
                     redir_addr.sin_family = AF_INET;
@@ -557,10 +557,23 @@ public:
             DWORD wr = ::WaitForMultipleObjects(nb, &wait_handles[0], FALSE, INFINITE);
             if (wr == WAIT_FAILED) throw_last_error("WaitForMultipleObjects (complete_connections)");
             if (wr == WAIT_OBJECT_0) throw std::runtime_error("Control socket closed while trying to connect redirection sockets");
-            // XXX we should check that we really connected
-            unsigned i = idx_from_evhandle(wait_handles.at(wr - WAIT_OBJECT_0));
-            m_redir_connect_events.at(i).close();
+
+            HANDLE evhdl = wait_handles.at(wr - WAIT_OBJECT_0);
+            unsigned i = idx_from_evhandle(evhdl);
             SOCKET s_i = (SOCKET)get_handle((role_e)i);
+
+            // check that we really connected:
+            WSANETWORKEVENTS redir_connect_network_event;
+            ZeroMemory(&redir_connect_network_event, sizeof(redir_connect_network_event));
+            if (SOCKET_ERROR == ::WSAEnumNetworkEvents(s_i, evhdl, &redir_connect_network_event))
+                throw_last_error("WSAEnumNetworkEvents (complete_connections)");
+            if (!(redir_connect_network_event.lNetworkEvents & FD_CONNECT))
+                throw std::runtime_error("Connection event signalled but not tagged as such");
+            int connect_err = redir_connect_network_event.iErrorCode[FD_CONNECT_BIT];
+            if (connect_err)
+                throw_system_error("A connection attempt to a redirection socket failed", (DWORD)connect_err);
+
+            m_redir_connect_events.at(i).close();
             // ::shutdown(s_i, i == REDIR_STDIN ? SD_SEND : SD_RECEIVE);
             CUniqueSocket::set_to_blocking(s_i);
         }
