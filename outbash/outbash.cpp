@@ -973,6 +973,12 @@ int main()
 
     CUniqueSocket sock(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
+    int optval = 1;
+    if (::setsockopt(sock.get(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (char *)&optval, sizeof(optval)) == SOCKET_ERROR) {
+        Win32_perror("outbash: setsockopt (SO_EXCLUSIVEADDRUSE)");
+        std::exit(EXIT_FAILURE);
+    }
+
     struct sockaddr_in serv_addr;
     std::memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
