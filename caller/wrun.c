@@ -402,7 +402,7 @@ static struct listening_socket socket_listen_one_loopback()
     return lsock;
 }
 
-static int accept_and_close_listener(struct listening_socket *lsock)
+static int accept_listener(struct listening_socket *lsock)
 {
     struct sockaddr_in client_addr;
     memset(&client_addr, 0, sizeof(client_addr));
@@ -415,11 +415,16 @@ static int accept_and_close_listener(struct listening_socket *lsock)
         dprintf(STDERR_FILENO, "%s: accept() failed: %s\n", tool_name, my_strerror(errno));
         terminate_nocore();
     }
-    // hopefully, like under Linux, WSL closes reliably:
-    close(lsock->sockfd);
-    lsock->sockfd = -1;
-
     return sock;
+}
+
+static void close_listener(struct listening_socket *lsock)
+{
+    if (lsock->sockfd >= 0) {
+        // hopefully, like under Linux, WSL closes reliably:
+        close(lsock->sockfd);
+        lsock->sockfd = -1;
+    }
 }
 
 #define CTRL_IN_BUFFER_SIZE 128
@@ -654,7 +659,7 @@ static void fs_init_accept_as_needed(struct forward_state *fs, struct listening_
                                      bool own_redir, int std_fileno, const char *stream_name)
 {
     if (own_redir) {
-        int sock = accept_and_close_listener(lsock);
+        int sock = accept_listener(lsock);
         if (std_fileno == STDIN_FILENO) {
             // shutdown(sock, SHUT_RD);
             int flags = FORWARD_STATE_OUT_IS_SOCKET;
@@ -1027,6 +1032,10 @@ int main(int argc, char *argv[])
     fs_init_accept_as_needed(&fs[STDIN_FILENO],  &lsock_in,  redirects & STDIN_NEEDS_SOCKET_REDIRECT,  STDIN_FILENO,  "stdin");
     fs_init_accept_as_needed(&fs[STDOUT_FILENO], &lsock_out, redirects & STDOUT_NEEDS_SOCKET_REDIRECT, STDOUT_FILENO, "stdout");
     fs_init_accept_as_needed(&fs[STDERR_FILENO], &lsock_err, redirects & STDERR_NEEDS_SOCKET_REDIRECT, STDERR_FILENO, "stderr");
+
+    close_listener(&lsock_in);
+    close_listener(&lsock_out);
+    close_listener(&lsock_err);
 
     enum state_e state = RUNNING;
     int program_return_code = 255;
