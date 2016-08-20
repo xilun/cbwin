@@ -438,7 +438,11 @@ static char *ctrl_readln(int sock_ctrl, int *nonblock_marker)
 {
     static struct ctrl_in_buffer ctrl_buf;
 
-    *nonblock_marker = 0;
+    int flags = 0;
+    if (nonblock_marker) {
+        *nonblock_marker = 0;
+        flags = MSG_DONTWAIT;
+    }
 
     while (1) {
         char *nl = memchr(ctrl_buf.buffer, '\n', ctrl_buf.fill);
@@ -457,7 +461,7 @@ static char *ctrl_readln(int sock_ctrl, int *nonblock_marker)
         }
         int r;
         do {
-            r = recv(sock_ctrl, ctrl_buf.buffer + ctrl_buf.fill, CTRL_IN_BUFFER_SIZE - ctrl_buf.fill, MSG_DONTWAIT);
+            r = recv(sock_ctrl, ctrl_buf.buffer + ctrl_buf.fill, CTRL_IN_BUFFER_SIZE - ctrl_buf.fill, flags);
             if (r > 0)
                 ctrl_buf.fill += r;
             if (r == 0)
@@ -465,7 +469,8 @@ static char *ctrl_readln(int sock_ctrl, int *nonblock_marker)
         } while (r < 0 && errno == EINTR);
         if (r < 0) {
             if (errno == EWOULDBLOCK || errno == EAGAIN) {
-                *nonblock_marker = 1;
+                if (nonblock_marker)
+                    *nonblock_marker = 1;
                 return NULL;
             }
 
@@ -1032,6 +1037,12 @@ int main(int argc, char *argv[])
     fs_init_accept_as_needed(&fs[STDIN_FILENO],  &lsock_in,  redirects & STDIN_NEEDS_SOCKET_REDIRECT,  STDIN_FILENO,  "stdin");
     fs_init_accept_as_needed(&fs[STDOUT_FILENO], &lsock_out, redirects & STDOUT_NEEDS_SOCKET_REDIRECT, STDOUT_FILENO, "stdout");
     fs_init_accept_as_needed(&fs[STDERR_FILENO], &lsock_err, redirects & STDERR_NEEDS_SOCKET_REDIRECT, STDERR_FILENO, "stderr");
+
+    char *line = ctrl_readln(sock_ctrl, NULL);
+    if (!line || strcmp(line, "connected")) {
+        dprintf(STDERR_FILENO, "%s: did not receive connection validation from outbash.exe\n", tool_name);
+        terminate_nocore();
+    }
 
     close_listener(&lsock_in);
     close_listener(&lsock_out);

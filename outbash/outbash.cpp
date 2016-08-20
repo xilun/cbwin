@@ -700,7 +700,6 @@ private:
             CUniqueHandle job_handle;
             std::unique_ptr<OutbashStdRedirects> redir(nullptr);
             CUniqueHandle process_handle;
-            CUniqueHandle ctrl_ev;
 
             // scope for locals lifetime:
             {
@@ -748,12 +747,16 @@ private:
                         silent_breakaway = true;
                 }
 
-                ctrl_ev = m_usock.create_manual_event(FD_CLOSE);
-
                 if (redir.get()) {
+                    CUniqueHandle ctrl_close_ev = m_usock.create_manual_event(FD_CLOSE);
                     redir.get()->initiate_connections(caller_addr.sin_addr.s_addr);
-                    redir.get()->complete_connections(ctrl_ev);
+                    redir.get()->complete_connections(ctrl_close_ev);
+                    ctrl_close_ev.close();
+                    m_usock.set_to_blocking();
                 }
+
+                if (send_all(m_usock.get(), "connected\n", std::strlen("connected\n"), 0) == SOCKET_ERROR)
+                    throw_last_error("send_all (connected)");
 
                 job_handle = CUniqueHandle(::CreateJobObject(nullptr, nullptr), "CreateJobObject");
 
@@ -794,7 +797,7 @@ private:
                 ::CloseHandle(pi.hThread);
             }
 
-            m_usock.change_event_select(ctrl_ev, FD_CLOSE | FD_READ | FD_WRITE);
+            CUniqueHandle ctrl_ev = m_usock.create_manual_event(FD_CLOSE | FD_READ | FD_WRITE);
 
             bool try_get_line = true;
             bool can_send = false;
