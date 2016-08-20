@@ -13,13 +13,6 @@ main features:
 
 # security warning
 
-`outbash.exe` listens on 127.0.0.1, but validates that processes that establish a connection are
-running as the same user as `outbash.exe`. However, for now if redirections are used (explicitely
-or because the Windows console is not used directly) the redirected data uses extra unsecured
-loopback sockets from outbash.exe to the WSL caller tool. Therefore, if used on multi-user
-computers, there is a risk that another user manages to connect to a redirection port before
-`outbash.exe` does, and send/receive arbitrary data.
-
 Using cbwin breaks the WSL security model (access control within WSL using Linux accounts):
 Windows programs are not subject to extra WSL security checks, so the capability to run a Windows
 program is equivalent to being root in WSL. If you are only using separation between the WSL root
@@ -34,6 +27,10 @@ anything, including accessing protected Windows files and talking with `outbash.
 I do not recommend launching an elevated "Bash On Windows" (with or without `outbash.exe`) in an
 hostile environment, in order not to reduce the effectiveness of UAC.
 
+`outbash.exe` listens on 127.0.0.1, but validates that processes that establish a connection are
+running as the same user as `outbash.exe` -- and extra sockets used to forward redirections are
+connected in a way that prevents interceptions (this is implemented starting with version v0.10).
+Therefore, it can be used on multi-user computers.
 
 # installation
 
