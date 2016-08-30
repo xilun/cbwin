@@ -26,6 +26,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <Windows.h>
+#include <Shlwapi.h>
 
 #include <memory>
 #include <thread>
@@ -878,6 +879,43 @@ static void init_locale_console_cp()
     _setmbcp((int)cp);
 }
 
+#define XMING_CMD L"%s\\Xming.exe -br -multiwindow -clipboard -dpi %d -compositewm -wgl -silent-dup-error"
+static void optionally_start_xming()
+{
+	LPWSTR szXmingPath = NULL;
+	LPWSTR cmdBuf = NULL;
+	DWORD cbBufSize = 0;
+	STARTUPINFO si = { 0 };
+	PROCESS_INFORMATION pi = { 0 };
+	HDC screen;
+
+	HRESULT hr = AssocQueryStringW(0, ASSOCSTR_EXECUTABLE, L".xlaunch", NULL, NULL, &cbBufSize);
+	if (FAILED(hr)) return;
+	szXmingPath = new WCHAR[cbBufSize + 1];
+	hr = AssocQueryStringW(0, ASSOCSTR_EXECUTABLE, L".xlaunch", NULL, szXmingPath, &cbBufSize);
+	if (FAILED(hr)) {
+		delete[] szXmingPath;
+		return;
+	}
+	PathRemoveFileSpec(szXmingPath);
+
+	screen = GetDC(0);
+	int dpi = GetDeviceCaps(screen, LOGPIXELSX); // Assuming square pixels
+	ReleaseDC(0, screen);
+
+	cmdBuf = new TCHAR[cbBufSize + wcslen(XMING_CMD) + 1];
+	swprintf(cmdBuf, cbBufSize + wcslen(XMING_CMD), XMING_CMD, szXmingPath, dpi);
+
+	si.cb = sizeof(si);
+	if (CreateProcessW(NULL, cmdBuf, NULL, NULL, FALSE, NORMAL_PRIORITY_CLASS, NULL, szXmingPath, &si, &pi) == 0) {
+		Win32_perror("outbash: Optional Xming");
+		std::fprintf(stderr, "outbash: CreateProcess failed (%d) for command: %S\n", ::GetLastError(), cmdBuf);
+	}
+
+	delete[] cmdBuf;
+	delete[] szXmingPath;
+}
+
 int main()
 {
     init_locale_console_cp();
@@ -903,6 +941,8 @@ int main()
 
     CUniqueHandle accept_event = sock.create_auto_event(FD_ACCEPT);
 
+
+	optionally_start_xming();
     PROCESS_INFORMATION pi;
     if (start_command(
             utf::widen("bash ") + CCmdLine().new_cmd_line((unsigned)ntohs(serv_addr.sin_port)),

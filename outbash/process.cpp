@@ -44,7 +44,7 @@ AttributeHandleList::AttributeHandleList(std::vector<HANDLE> handle_list)
     : m_handle_store(nullptr),
       m_pAttributeList(nullptr, attribute_list_deleter)
 {
-    size_t size = 0;
+    SIZE_T size = 0;
     BOOL ok = ::InitializeProcThreadAttributeList(NULL, 1, 0, &size)
               || ::GetLastError() == ERROR_INSUFFICIENT_BUFFER;
     if (!ok) throw_last_error("InitializeProcThreadAttributeList(NULL, ...) failed");
