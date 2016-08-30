@@ -249,6 +249,7 @@ static void check_argc(int argc)
 {
     if (argc < 1) {
         dprintf(STDERR_FILENO, "%s: no command\n", tool_name);
+        dprintf(STDERR_FILENO, "type %s --help for more information.\n", tool_name);
         terminate_nocore();
     }
 }
@@ -367,7 +368,7 @@ struct listening_socket {
 
 #define NO_LISTENING_SOCKET {-1, 0}
 
-struct listening_socket socket_listen_one_loopback()
+static struct listening_socket socket_listen_one_loopback()
 {
     struct listening_socket lsock = NO_LISTENING_SOCKET;
     lsock.sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -401,7 +402,7 @@ struct listening_socket socket_listen_one_loopback()
     return lsock;
 }
 
-int accept_and_close_listener(struct listening_socket *lsock)
+static int accept_listener(struct listening_socket *lsock)
 {
     struct sockaddr_in client_addr;
     memset(&client_addr, 0, sizeof(client_addr));
@@ -414,11 +415,16 @@ int accept_and_close_listener(struct listening_socket *lsock)
         dprintf(STDERR_FILENO, "%s: accept() failed: %s\n", tool_name, my_strerror(errno));
         terminate_nocore();
     }
-    // hopefully, like under Linux, WSL closes reliably:
-    close(lsock->sockfd);
-    lsock->sockfd = -1;
-
     return sock;
+}
+
+static void close_listener(struct listening_socket *lsock)
+{
+    if (lsock->sockfd >= 0) {
+        // hopefully, like under Linux, WSL closes reliably:
+        close(lsock->sockfd);
+        lsock->sockfd = -1;
+    }
 }
 
 #define CTRL_IN_BUFFER_SIZE 128
@@ -432,7 +438,11 @@ static char *ctrl_readln(int sock_ctrl, int *nonblock_marker)
 {
     static struct ctrl_in_buffer ctrl_buf;
 
-    *nonblock_marker = 0;
+    int flags = 0;
+    if (nonblock_marker) {
+        *nonblock_marker = 0;
+        flags = MSG_DONTWAIT;
+    }
 
     while (1) {
         char *nl = memchr(ctrl_buf.buffer, '\n', ctrl_buf.fill);
@@ -451,7 +461,7 @@ static char *ctrl_readln(int sock_ctrl, int *nonblock_marker)
         }
         int r;
         do {
-            r = recv(sock_ctrl, ctrl_buf.buffer + ctrl_buf.fill, CTRL_IN_BUFFER_SIZE - ctrl_buf.fill, MSG_DONTWAIT);
+            r = recv(sock_ctrl, ctrl_buf.buffer + ctrl_buf.fill, CTRL_IN_BUFFER_SIZE - ctrl_buf.fill, flags);
             if (r > 0)
                 ctrl_buf.fill += r;
             if (r == 0)
@@ -459,7 +469,8 @@ static char *ctrl_readln(int sock_ctrl, int *nonblock_marker)
         } while (r < 0 && errno == EINTR);
         if (r < 0) {
             if (errno == EWOULDBLOCK || errno == EAGAIN) {
-                *nonblock_marker = 1;
+                if (nonblock_marker)
+                    *nonblock_marker = 1;
                 return NULL;
             }
 
@@ -653,7 +664,7 @@ static void fs_init_accept_as_needed(struct forward_state *fs, struct listening_
                                      bool own_redir, int std_fileno, const char *stream_name)
 {
     if (own_redir) {
-        int sock = accept_and_close_listener(lsock);
+        int sock = accept_listener(lsock);
         if (std_fileno == STDIN_FILENO) {
             // shutdown(sock, SHUT_RD);
             int flags = FORWARD_STATE_OUT_IS_SOCKET;
@@ -672,7 +683,7 @@ static void fs_init_accept_as_needed(struct forward_state *fs, struct listening_
     }
 }
 
-void *forward_one_stream(void *arg)
+static void *forward_one_stream(void *arg)
 {
     struct forward_state *fs = arg;
 
@@ -730,7 +741,7 @@ static void tstop_handler(int n)
 //
 enum state_e { RUNNING, SUSPEND_PENDING, DYING, TERMINATED };
 
-char *get_homedir_dup(void)
+static char *get_homedir_dup(void)
 {
     char *homedir = getenv("HOME");
     if (homedir)
@@ -741,18 +752,21 @@ char *get_homedir_dup(void)
     return strdup(p->pw_dir);
 }
 
-void get_outbash_infos(int *port, bool *force_redirects)
+static bool get_outbash_infos(int *port, bool *force_redirects)
 {
     const char *origin = "OUTBASH_PORT environment variable";
     char *outbash_port = getenv("OUTBASH_PORT");
 
     char buffer[16] = { 0 };
 
+    *port = 0;
+    *force_redirects = false;
+
     if (outbash_port == NULL) {
         char *homedir = get_homedir_dup();
         if (!homedir) {
             dprintf(STDERR_FILENO, "%s: OUTBASH_PORT environment variable not set, and could not get home directory\n", tool_name);
-            terminate_nocore();
+            return false;
         }
 #define CONF_SESSION_PORT_FILE "/.config/cbwin/outbash_port"
         char *conf_file_path = xmalloc(strlen(homedir) + strlen(CONF_SESSION_PORT_FILE) + 1);
@@ -761,7 +775,7 @@ void get_outbash_infos(int *port, bool *force_redirects)
         FILE *f = fopen(conf_file_path, "r");
         if (!f || !fread(buffer, 1, 15, f)) {
             dprintf(STDERR_FILENO, "%s: OUTBASH_PORT environment variable not set, and could not read %s\n", tool_name, conf_file_path);
-            terminate_nocore();
+            return false;
         }
         fclose(f);
         free(conf_file_path);
@@ -775,10 +789,63 @@ void get_outbash_infos(int *port, bool *force_redirects)
     int p = atoi(outbash_port);
     if (p < 1 || p > 65535) {
         dprintf(STDERR_FILENO, "%s: %s does not contain a valid port number\n", tool_name, origin);
-        terminate_nocore();
+        return false;
     }
 
     *port = p;
+    return true;
+}
+
+static void print_help(void)
+{
+    dprintf(STDERR_FILENO, "\nusage: %s [:] [OPTIONS] COMMAND_TO_RUN_ON_WINDOWS [PARAM_1 ... PARAM_N]\n\n", tool_name);
+
+    dprintf(STDERR_FILENO,
+    "Run native Windows executables outside of WSL. The output will be shown inside\n"
+    "of WSL. For this to work, this must be called from outbash.exe\n"
+    "\n"
+    "There are three variations of this command: wcmd, wrun and wstart\n"
+    "\n"
+    "  * wcmd   runs a Windows command with cmd.exe and waits for its completion.\n"
+    "           Example: 'wcmd dir'\n"
+    "\n"
+    "  * wrun   runs a Windows command using CreateProcess and waits for it to exit.\n"
+    "           Example: 'wrun notepad'\n"
+    "\n"
+    "  * wstart runs a Windows command in background as using 'start' from cmd.exe.\n"
+    "           Example: 'wstart http://microsoft.com/'\n"
+    "\n"
+    "A \":\" first parameter will make the tool disregard the current WSL working\n"
+    "directory and launch the Windows command from %%USERPROFILE%%.\n"
+    "Example:   user@BOX:/proc$ wcmd : echo %%cd%%\n"
+    "           C:\\Users\\winuser\n"
+    "\n"
+    "Options:\n"
+    "    --force-redirects\n"
+    "        Redirect standard input, output, and/or error through the caller tool\n"
+    "        even if they otherwise would be connected to the Win32 console.\n"
+    "        Try that option if the output is not correct, for example if lines are\n"
+    "        not aligned. This can also help if the typed characters are not all\n"
+    "        interpreted correctly. However, the target program won't be able to use\n"
+    "        the Win32 console API anymore, so this mode has drawbacks: for example\n"
+    "        the output won't be colored.\n"
+    "\n"
+    "    --env [VAR_1=VALUE_1 ... VAR_N=VALUE_N]\n"
+    "        Launch the Windows command with modified Windows environment variables.\n"
+    "        outbash.exe uses its environment variables to launch commands, and this\n"
+    "        option can be used to launch one with a modified environment.\n"
+    "        Check with: 'wcmd --env VAR_1=VALUE_1 ... VAR_N=VALUE_N set'\n"
+    "\n"
+    "    --silent-breakaway\n"
+    "        Child programs of the initial one won't be controlled by outbash.exe;\n"
+    "        they won't be suspended when the caller tool is, and they won't be\n"
+    "        killed when the caller tool or the initial program dies.\n"
+    "        This option is automatically activated when using 'wstart'.\n"
+    "        For 'wcmd' and 'wstart', the initial program is 'cmd.exe'.\n"
+    "        For 'wrun', the initial program is COMMAND_TO_RUN_ON_WINDOWS.\n"
+    "\n"
+    "For more info, check https://github.com/xilun/cbwin\n\n"
+    );
 }
 
 int main(int argc, char *argv[])
@@ -794,9 +861,10 @@ int main(int argc, char *argv[])
     fill_std_fd_info_identity(STDERR_FILENO);
 
     bool force_redirects = false;
+    bool silent_breakaway = (tool == TOOL_WSTART);
 
     int port;
-    get_outbash_infos(&port, &force_redirects);
+    bool terminate = !get_outbash_infos(&port, &force_redirects);
 
     struct string outbash_command = string_create("cd:");
 
@@ -812,11 +880,12 @@ int main(int argc, char *argv[])
               && (cwd[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '/'
                   || cwd[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '\0'))) {
             dprintf(STDERR_FILENO, "%s: can't translate a WSL VolFs path to a Win32 one\n", tool_name);
-            terminate_nocore();
+            terminate = true;
+        } else {
+            char* cwd_win32 = convert_drive_fs_path_to_win32(cwd);
+            string_append(&outbash_command, cwd_win32);
+            free(cwd_win32);
         }
-        char* cwd_win32 = convert_drive_fs_path_to_win32(cwd);
-        string_append(&outbash_command, cwd_win32);
-        free(cwd_win32);
         free(cwd);
     }
 
@@ -838,11 +907,20 @@ int main(int argc, char *argv[])
         } else if (!strcmp(argv[0], "--force-redirects")) {
             force_redirects = true;
             shift(&argc, &argv);
+        } else if (!strcmp(argv[0], "--silent-breakaway")) {
+            silent_breakaway = true;
+            shift(&argc, &argv);
+        } else if (!strcmp(argv[0], "--help")) {
+            print_help();
+            exit(1);
         } else {
             dprintf(STDERR_FILENO, "%s: unknown command line option: %s\n", tool_name, argv[0]);
+            dprintf(STDERR_FILENO, "type %s --help for more information.\n", tool_name);
             terminate_nocore();
         }
     }
+    if (terminate)
+        terminate_nocore();
     check_argc(argc);
 
     decide_will_redirect(STDIN_FILENO,  force_redirects);
@@ -879,6 +957,9 @@ int main(int argc, char *argv[])
     ask_redirect(&outbash_command, "\nstderr:", STDERR_FILENO,
                  (redirects & STDERR_NEEDS_SOCKET_REDIRECT) ? lsock_err.port : lsock_out.port);
 
+    if (silent_breakaway)
+        string_append(&outbash_command, "\nsilent_breakaway:1");
+
     switch (tool) {
     case TOOL_WRUN:
         string_append(&outbash_command, "\nrun:");
@@ -887,7 +968,7 @@ int main(int argc, char *argv[])
         string_append(&outbash_command, "\nrun:cmd /C ");
         break;
     case TOOL_WSTART:
-        string_append(&outbash_command, "\nsilent_breakaway:1\nrun:cmd /C start ");
+        string_append(&outbash_command, "\nrun:cmd /C start ");
         break;
     }
 
@@ -956,6 +1037,16 @@ int main(int argc, char *argv[])
     fs_init_accept_as_needed(&fs[STDIN_FILENO],  &lsock_in,  redirects & STDIN_NEEDS_SOCKET_REDIRECT,  STDIN_FILENO,  "stdin");
     fs_init_accept_as_needed(&fs[STDOUT_FILENO], &lsock_out, redirects & STDOUT_NEEDS_SOCKET_REDIRECT, STDOUT_FILENO, "stdout");
     fs_init_accept_as_needed(&fs[STDERR_FILENO], &lsock_err, redirects & STDERR_NEEDS_SOCKET_REDIRECT, STDERR_FILENO, "stderr");
+
+    char *line = ctrl_readln(sock_ctrl, NULL);
+    if (!line || strcmp(line, "connected")) {
+        dprintf(STDERR_FILENO, "%s: did not receive connection validation from outbash.exe\n", tool_name);
+        terminate_nocore();
+    }
+
+    close_listener(&lsock_in);
+    close_listener(&lsock_out);
+    close_listener(&lsock_err);
 
     enum state_e state = RUNNING;
     int program_return_code = 255;

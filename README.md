@@ -1,6 +1,6 @@
 # cbwin
 
-Launch Windows programs from "Bash on Ubuntu on Windows" (WSL) -- or anything doing TCP on 127.0.0.1
+Launch Windows programs from "Bash on Ubuntu on Windows" (WSL)
 
 main features:
 
@@ -10,6 +10,27 @@ main features:
 * exit codes propagation
 * launch "detached" GUI Windows programs (uses `start` of `cmd`)
 
+
+# security warning
+
+Using cbwin breaks the WSL security model (access control within WSL using Linux accounts):
+Windows programs are not subject to extra WSL security checks, so the capability to run a Windows
+program is equivalent to being root in WSL. If you are only using separation between the WSL root
+and user to avoid casual mistakes and not for strong security purposes this is not an issue.
+(Note that being root under WSL does not give you any Windows administrator rights.)
+
+WSL is currently vulnerable to a form of UAC bypass when running elevated WSL processes, see
+[this issue](https://github.com/Microsoft/BashOnWindows/issues/626).
+Elevated instances of `outbash.exe` do not allow non-elevated callers to launch processes, but
+it is easy for non-elevated WSL processes to force elevated ones (present and future) to do
+anything, including accessing protected Windows files and talking with `outbash.exe`. Therefore,
+I do not recommend launching an elevated "Bash On Windows" (with or without `outbash.exe`) in an
+hostile environment, in order not to reduce the effectiveness of UAC.
+
+`outbash.exe` listens on 127.0.0.1, but validates that processes that establish a connection are
+running as the same user as `outbash.exe` -- and extra sockets used to forward redirections are
+connected in a way that prevents interceptions (this is implemented starting with version v0.10).
+Therefore, it can be used on multi-user computers.
 
 # installation
 
@@ -131,10 +152,4 @@ or `wcmd python`) does not work well. The main problems seem to be related to th
 regard can be achieved without some changes from MS about how their stuff works. (This might be somehow related to WSL
 not working well, for now, with ConEmu or Bitvise SSH Server - but I'm not really sure about that)
 
-Anybody with access to TCP 127.0.0.1 can launch anything with the privileges of the user who launched `outbash.exe`.
-This might not be an issue if you are the only user of your computer. This might however break the WSL security model
-(access control within WSL using Linux accounts), but if you are only using separation between the WSL root and user
-to avoid casual mistakes and not for strong security purposes this is also not an issue.
-
-It is an unfinished work in progress. There are various stuff not-implemented (CRT compatible escaping of the command
-line args, trying to capture/restore the environment to easily do builds...)
+It is an unfinished work in progress. There are various stuff not-implemented and maybe tons of bugs.

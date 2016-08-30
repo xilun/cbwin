@@ -20,9 +20,6 @@
  * SOFTWARE.
  */
 
-// WARNING: This program is unsafe if you have multiple users/accounts on the same computer!
-// It trusts anything that can connect in TCP to 127.0.0.1
-
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <Windows.h>
@@ -49,6 +46,8 @@
 #include "job.h"
 #include "ntsuspend.h"
 #include "handle.h"
+#include "tcp_help.h"
+#include "security.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -84,19 +83,33 @@ class CCmdLine
 {
 public:
     CCmdLine()
-      : m_escaped_bash_cmd_line_params(),
+      : m_bash_launcher(get_default_bash_launcher()),
+        m_escaped_bash_cmd_line_params(),
         m_has_bash_exe_tilde(false),
         m_is_session(false)
     {
         const wchar_t* p = get_cmd_line_params();
 
-        if (startswith<wchar_t>(p, L"--outbash-session")
-            && (is_cmd_line_sep(p[wcslen(L"--outbash-session")])
-                || p[wcslen(L"--outbash-session")] == L'\0')) {
-            m_is_session = true;
-            p += wcslen(L"--outbash-session");
-            while (is_cmd_line_sep(*p))
-                p++;
+        while (1) {
+            const wchar_t* new_p;
+            std::wstring param = parse_argv_param(p, &new_p);
+            if (!startswith<wchar_t>(param, L"--outbash-"))
+                break;
+
+            if (param == L"--outbash-session") {
+                m_is_session = true;
+            } else if (param == L"--outbash-launcher") {
+                m_bash_launcher = parse_argv_param(new_p, &new_p);
+                if (m_bash_launcher.empty() || m_bash_launcher.find(L'"') != std::wstring::npos) {
+                    std::fprintf(stderr, "outbash: invalid --outbash-launcher param %S\n", m_bash_launcher.c_str());
+                    std::exit(1);
+                }
+            } else {
+                std::fprintf(stderr, "outbash: unknown %S param\n", param.c_str());
+                std::exit(1);
+            }
+
+            p = new_p;
         }
 
         m_has_bash_exe_tilde = (p[0] == L'~')
@@ -112,7 +125,7 @@ public:
 
     std::wstring new_cmd_line(unsigned port)
     {
-        std::wstring new_params_line = m_has_bash_exe_tilde ? L"~ -c \"" : L"-c \"";
+        std::wstring cmd_line = L"\"" + m_bash_launcher + L"\" " + (m_has_bash_exe_tilde ? L"~ -c \"" : L"-c \"");
 
         if (!m_is_session) {
 
@@ -122,7 +135,7 @@ public:
              * outbash ~ params => bash.exe ~ - c "OUTBASH=4242 bash <escaped(params)>"
              */
 
-            new_params_line += L"OUTBASH_PORT=" + std::to_wstring(port) + L" bash " + m_escaped_bash_cmd_line_params;
+            cmd_line += L"OUTBASH_PORT=" + std::to_wstring(port) + L" bash " + m_escaped_bash_cmd_line_params;
 
         } else {
 
@@ -130,25 +143,58 @@ public:
              * outbash --outbash-session => bash.exe -c "mkdir -p ~/.config/cbwin ; echo 4242 > ~/.config/cbwin/outbash_port ; OUTBASH=4242 exec bash "
              */
 
-            new_params_line += L"mkdir -p ~/.config/cbwin ; echo " + std::to_wstring(port)
-                                + L" > ~/.config/cbwin/outbash_port ; OUTBASH_PORT=" + std::to_wstring(port)
-                                + L" exec bash " + m_escaped_bash_cmd_line_params;
+            cmd_line +=   L"mkdir -p ~/.config/cbwin ; echo " + std::to_wstring(port)
+                        + L" > ~/.config/cbwin/outbash_port ; OUTBASH_PORT=" + std::to_wstring(port)
+                        + L" exec bash " + m_escaped_bash_cmd_line_params;
         }
 
-        new_params_line += L"\"";
-        return new_params_line;
+        cmd_line += L"\"";
+        return cmd_line;
     }
 
 private:
-    static const std::wstring bash_escape_within_double_quotes(const wchar_t* p)
+    static std::wstring bash_escape_within_double_quotes(const wchar_t* p)
     {
-        std::wstring result = L"";
+        std::wstring result;
         while (*p) {
             if (*p == L'$' || *p == L'`' || *p == L'\\' || *p == L'"')
                 result.push_back(L'\\');
             result.push_back(*p);
             p++;
         }
+        return result;
+    }
+
+    static std::wstring parse_argv_param(const wchar_t* p, const wchar_t** next_p)
+    {
+        std::wstring result;
+        bool quoted = false;
+        while (true) {
+            int backslashes = 0;
+            while (*p == L'\\') {
+                p++;
+                backslashes++;
+            }
+            if (*p == L'"') {
+                result.append(backslashes / 2, L'\\');
+                if (backslashes % 2 == 0) {
+                    p++;
+                    if (!quoted || *p != L'"') {
+                        quoted = !quoted;
+                        continue; // while (true)
+                    }
+                }
+            } else {
+                result.append(backslashes, L'\\');
+            }
+            if (*p == L'\0' || (!quoted && is_cmd_line_sep(*p)))
+                break;
+            result.push_back(*p);
+            p++;
+        }
+        while (is_cmd_line_sep(*p))
+            p++;
+        *next_p = p;
         return result;
     }
 
@@ -167,7 +213,16 @@ private:
         return p; // pointer to the first param (if any) in the command line
     }
 
+    static std::wstring get_default_bash_launcher()
+    {
+        wchar_t buf[MAX_PATH+1];
+        UINT res = ::GetSystemDirectoryW(buf, MAX_PATH+1);
+        if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "outbash: GetSystemDirectory error\n"); std::abort(); }
+        return buf + std::wstring(L"\\bash.exe");
+    }
+
 private:
+    std::wstring    m_bash_launcher;
     std::wstring    m_escaped_bash_cmd_line_params;
     bool            m_has_bash_exe_tilde;
     bool            m_is_session;
@@ -458,7 +513,7 @@ public:
                     set_same_as_other(REDIR_STDERR, REDIR_STDOUT);
                 } else {
                     CUniqueSocket sock(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-                    CUniqueHandle conn_ev = sock.create_auto_event(FD_CONNECT);
+                    CUniqueHandle conn_ev = sock.create_manual_event(FD_CONNECT);
                     struct sockaddr_in redir_addr;
                     std::memset(&redir_addr, 0, sizeof(redir_addr));
                     redir_addr.sin_family = AF_INET;
@@ -503,10 +558,23 @@ public:
             DWORD wr = ::WaitForMultipleObjects(nb, &wait_handles[0], FALSE, INFINITE);
             if (wr == WAIT_FAILED) throw_last_error("WaitForMultipleObjects (complete_connections)");
             if (wr == WAIT_OBJECT_0) throw std::runtime_error("Control socket closed while trying to connect redirection sockets");
-            // XXX we should check that we really connected
-            unsigned i = idx_from_evhandle(wait_handles.at(wr - WAIT_OBJECT_0));
-            m_redir_connect_events.at(i).close();
+
+            HANDLE evhdl = wait_handles.at(wr - WAIT_OBJECT_0);
+            unsigned i = idx_from_evhandle(evhdl);
             SOCKET s_i = (SOCKET)get_handle((role_e)i);
+
+            // check that we really connected:
+            WSANETWORKEVENTS redir_connect_network_event;
+            ZeroMemory(&redir_connect_network_event, sizeof(redir_connect_network_event));
+            if (SOCKET_ERROR == ::WSAEnumNetworkEvents(s_i, evhdl, &redir_connect_network_event))
+                throw_last_error("WSAEnumNetworkEvents (complete_connections)");
+            if (!(redir_connect_network_event.lNetworkEvents & FD_CONNECT))
+                throw std::runtime_error("Connection event signalled but not tagged as such");
+            int connect_err = redir_connect_network_event.iErrorCode[FD_CONNECT_BIT];
+            if (connect_err)
+                throw_system_error("A connection attempt to a redirection socket failed", (DWORD)connect_err);
+
+            m_redir_connect_events.at(i).close();
             // ::shutdown(s_i, i == REDIR_STDIN ? SD_SEND : SD_RECEIVE);
             CUniqueSocket::set_to_blocking(s_i);
         }
@@ -529,12 +597,14 @@ private:
 class CConnection
 {
 public:
-    explicit CConnection(CUniqueSocket&& usock) noexcept : m_usock(std::move(usock)) {}
+    explicit CConnection(CUniqueSocket&& usock, int server_port) noexcept
+        : m_usock(std::move(usock)),
+          m_server_port(server_port) {}
 
     void run()
     {
         try {
-            CActiveConnection _con(m_usock);
+            CActiveConnection _con(m_usock, m_server_port);
             _con.run();
         } catch (const std::exception& e) {
             std::fprintf(stderr, "outbash: CConnection::run() exception: %s\n", e.what());
@@ -546,7 +616,10 @@ private:
     class CActiveConnection
     {
     public:
-        explicit CActiveConnection(CUniqueSocket& usock) noexcept : m_usock(usock), m_buf() {}
+        explicit CActiveConnection(CUniqueSocket& usock, int server_port) noexcept
+            : m_usock(usock),
+              m_buf(),
+              m_server_port(server_port) {}
 
         bool buf_get_line(std::string& out_line)
         {
@@ -628,7 +701,6 @@ private:
             CUniqueHandle job_handle;
             std::unique_ptr<OutbashStdRedirects> redir(nullptr);
             CUniqueHandle process_handle;
-            CUniqueHandle ctrl_ev;
 
             // scope for locals lifetime:
             {
@@ -639,6 +711,21 @@ private:
                 auto vars_cp = [&] { if (!vars) vars.reset(new EnvVars(initial_env_vars)); return vars.get(); };
                 auto inst_redir = [&] { if (!redir) redir.reset(new OutbashStdRedirects); return redir.get(); };
                 bool silent_breakaway = false;
+
+                struct sockaddr_in caller_addr;
+                int namelen = sizeof(caller_addr);
+                if (::getpeername(m_usock.get(), (sockaddr *)&caller_addr, &namelen) != 0)
+                    throw_last_error("getsockname (caller)");
+
+                // scope for caller_process_handle
+                {
+                    CUniqueHandle caller_process_handle = Get_Loopback_Tcp_Peer_Process_Handle(m_server_port, ntohs(caller_addr.sin_port));
+                    if (!caller_process_handle.is_valid())
+                        throw std::runtime_error("caller process is not accessible");
+                    bool allowed = check_caller_process_allowed(caller_process_handle);
+                    if (!allowed)
+                        throw std::runtime_error("access attempt not allowed");
+                }
 
                 while (1) {
                     std::string line = recv_line();
@@ -661,28 +748,25 @@ private:
                         silent_breakaway = true;
                 }
 
-                ctrl_ev = m_usock.create_manual_event(FD_CLOSE);
-
                 if (redir.get()) {
-                    struct sockaddr_in caller_addr;
-                    int namelen = sizeof(caller_addr);
-                    if (::getpeername(m_usock.get(), (sockaddr *)&caller_addr, &namelen) != 0) {
-                        Win32_perror("outbash: getsockname (caller)");
-                        caller_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // fallback
-                    }
+                    CUniqueHandle ctrl_close_ev = m_usock.create_manual_event(FD_CLOSE);
                     redir.get()->initiate_connections(caller_addr.sin_addr.s_addr);
-                    redir.get()->complete_connections(ctrl_ev);
+                    redir.get()->complete_connections(ctrl_close_ev);
+                    ctrl_close_ev.close();
+                    m_usock.set_to_blocking();
                 }
+
+                if (send_all(m_usock.get(), "connected\n", std::strlen("connected\n"), 0) == SOCKET_ERROR)
+                    throw_last_error("send_all (connected)");
 
                 job_handle = CUniqueHandle(::CreateJobObject(nullptr, nullptr), "CreateJobObject");
 
                 JOBOBJECT_EXTENDED_LIMIT_INFORMATION job_limit_infos;
                 ZeroMemory(&job_limit_infos, sizeof(job_limit_infos));
 
-                // * We are not trying to provide security about anything, so allowing the convenience
-                //   of *explicitely* breaking away from this job is better than pretending this will
-                //   not happen, because there are probably 100000 ways to create arbitrary processes
-                //   that survive the job even if breaking away is not allowed here.
+                // * Allowing the convenience of *explicitely* breaking away from this job is better than
+                //   pretending this will not happen, because there are probably 100000 ways to create
+                //   arbitrary processes that survive the job even if breaking away is not allowed here.
                 // * If we fail here with a C++ exception, or if the whole outbash process fails, let
                 //   the job automatically terminate. For now I just can't think of any good reason we
                 //   could let it continue to run, especially given breaking away is allowed.
@@ -714,7 +798,7 @@ private:
                 ::CloseHandle(pi.hThread);
             }
 
-            m_usock.change_event_select(ctrl_ev, FD_CLOSE | FD_READ | FD_WRITE);
+            CUniqueHandle ctrl_ev = m_usock.create_manual_event(FD_CLOSE | FD_READ | FD_WRITE);
 
             bool try_get_line = true;
             bool can_send = false;
@@ -834,10 +918,12 @@ private:
     private:
         CUniqueSocket&  m_usock;
         std::string     m_buf;
+        int             m_server_port;
     };
 
 private:
     CUniqueSocket   m_usock;
+    int             m_server_port;
 };
 
 struct ThreadConnection {
@@ -928,6 +1014,12 @@ int main()
 
     CUniqueSocket sock(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
+    int optval = 1;
+    if (::setsockopt(sock.get(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (char *)&optval, sizeof(optval)) == SOCKET_ERROR) {
+        Win32_perror("outbash: setsockopt (SO_EXCLUSIVEADDRUSE)");
+        std::exit(EXIT_FAILURE);
+    }
+
     struct sockaddr_in serv_addr;
     std::memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
@@ -937,6 +1029,8 @@ int main()
     int namelen = sizeof(serv_addr);
     if (::getsockname(sock.get(), (sockaddr *)&serv_addr, &namelen) != 0) { Win32_perror("outbash: getsockname"); std::exit(EXIT_FAILURE); }
 
+    const int server_port = ntohs(serv_addr.sin_port);
+
     if (::listen(sock.get(), SOMAXCONN_HINT(600)) != 0) { Win32_perror("outbash: listen"); std::exit(EXIT_FAILURE); }
 
     CUniqueHandle accept_event = sock.create_auto_event(FD_ACCEPT);
@@ -945,7 +1039,7 @@ int main()
 	optionally_start_xming();
     PROCESS_INFORMATION pi;
     if (start_command(
-            utf::widen("bash ") + CCmdLine().new_cmd_line((unsigned)ntohs(serv_addr.sin_port)),
+            CCmdLine().new_cmd_line((unsigned)server_port),
             nullptr, nullptr, nullptr, 0,
             pi) != 0)
         std::exit(EXIT_FAILURE);
@@ -1000,7 +1094,7 @@ int main()
                     CUniqueSocket usock(conn);
                     try {
                         usock.set_to_blocking();
-                        ThreadConnection tc{ std::make_unique<CConnection>(std::move(usock)), std::thread() };
+                        ThreadConnection tc{ std::make_unique<CConnection>(std::move(usock), server_port), std::thread() };
                         CConnection *pConnection = tc.m_pConn.get();
                         tc.m_thread = std::thread([=] { pConnection->run(); });
                         vTConn.push_back(std::move(tc));
