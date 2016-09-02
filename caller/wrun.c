@@ -25,6 +25,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <stdbool.h>
 #include <string.h>
 #include <limits.h>
@@ -1008,7 +1009,18 @@ int main(int argc, char *argv[])
 
 	for (int i = 0; i < argc; i++) {
 		char buf[PATH_MAX + 1];
-		char* cwd = realpath(argv[i], buf);
+		char* cwd = argv[i];
+
+		//Trimming spaces for cases where extra spaces ruin the realpath
+		while (isspace(*cwd)) cwd++;
+		if (*cwd == 0)
+			continue;
+		char* end = cwd + strlen(cwd) - 1;
+		while (end > cwd && isspace(*end)) end--;
+
+		// Write new null terminator
+		*(end + 1) = 0;
+		cwd = realpath(cwd, buf);
 		if (cwd == NULL) cwd = argv[i];
 		if (cwd[0] == '/') {
 			if (!((strncmp(cwd, MNT_DRIVE_FS_PREFIX, strlen(MNT_DRIVE_FS_PREFIX)) == 0)
