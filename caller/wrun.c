@@ -169,6 +169,15 @@ static char* convert_drive_fs_path_to_win32(const char* path)
     return result;
 }
 
+static bool is_absolute_drive_fs_path(const char* s)
+{
+    return (strncmp(s, MNT_DRIVE_FS_PREFIX, strlen(MNT_DRIVE_FS_PREFIX)) == 0)
+           && s[strlen(MNT_DRIVE_FS_PREFIX)] >= 'a'
+           && s[strlen(MNT_DRIVE_FS_PREFIX)] <= 'z'
+           && (s[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '/'
+               || s[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '\0');
+}
+
 struct string {
     size_t length;
     size_t capacity;
@@ -874,12 +883,8 @@ int main(int argc, char *argv[])
         string_append(&outbash_command, "~");
     } else {
         char* cwd = agetcwd();
-        if (!((strncmp(cwd, MNT_DRIVE_FS_PREFIX, strlen(MNT_DRIVE_FS_PREFIX)) == 0)
-              && cwd[strlen(MNT_DRIVE_FS_PREFIX)] >= 'a'
-              && cwd[strlen(MNT_DRIVE_FS_PREFIX)] <= 'z'
-              && (cwd[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '/'
-                  || cwd[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '\0'))) {
-            dprintf(STDERR_FILENO, "%s: can't translate a WSL VolFs path to a Win32 one\n", tool_name);
+        if (!is_absolute_drive_fs_path(cwd)) {
+            dprintf(STDERR_FILENO, "%s: current directory must be in DriveFs\n", tool_name);
             terminate = true;
         } else {
             char* cwd_win32 = convert_drive_fs_path_to_win32(cwd);
