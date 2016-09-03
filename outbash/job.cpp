@@ -103,12 +103,9 @@ SSIZE_T Get_Skip_Value(PJOBOBJECT_BASIC_PROCESS_ID_LIST pid_list, SSIZE_T idx)
 
 static HANDLE cast_msd_to_HANDLE(DWORD msd)
 {
-#pragma warning( push )
-// C4312: conversion from 'DWORD' to 'HANDLE' of greater size
+// (HANDLE)msd would yield: C4312: conversion from 'DWORD' to 'HANDLE' of greater size
 // Here this is OK because 'msd' stores a (tagged) NT handle, which fits in 32-bits even on Win64.
-#pragma warning( disable : 4312 )
-    return (HANDLE)msd;
-#pragma warning( pop )
+    return (HANDLE)(DWORD_PTR)msd;
 }
 
 static ULONG_PTR cast_HANDLE_to_msd(HANDLE hdl)

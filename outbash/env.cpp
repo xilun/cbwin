@@ -30,7 +30,7 @@
 #include "env.h"
 #include "utf.h"
 
-const from_system_type from_system;
+const from_system_type from_system{};
 
 using std::size_t;
 
