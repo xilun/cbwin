@@ -79,6 +79,20 @@ static bool startswith(const std::basic_string<CharT>& s, const std::basic_strin
     return !s.compare(0, start.size(), start);
 }
 
+static std::wstring get_localappdata() {
+	wchar_t buf[MAX_PATH + 6];
+	UINT res = ::GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH + 6);
+	if (res == 0 && ::GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
+		std::fprintf(stderr, "outbash: warning: LOCALAPPDATA environment variable not found\n");
+		return L"";
+	} else {
+		if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "outbash: GetEnvironmentVariable LOCALAPPDATA error\n"); std::abort(); }
+		wcscat(buf, L"\\lxss");
+		return buf;
+	}
+}
+static const std::wstring wsl_root_path = get_localappdata();
+
 class CCmdLine
 {
 public:
@@ -135,7 +149,7 @@ public:
              * outbash ~ params => bash.exe ~ - c "OUTBASH=4242 bash <escaped(params)>"
              */
 
-            cmd_line += L"OUTBASH_PORT=" + std::to_wstring(port) + L" bash " + m_escaped_bash_cmd_line_params;
+			cmd_line += L"OUTBASH_PORT=" + std::to_wstring(port) + L" WSL_PATH='" + wsl_root_path + L"' bash " + m_escaped_bash_cmd_line_params;
 
         } else {
 

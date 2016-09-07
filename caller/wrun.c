@@ -25,6 +25,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <stdbool.h>
 #include <string.h>
 #include <limits.h>
@@ -883,9 +884,38 @@ int main(int argc, char *argv[])
         string_append(&outbash_command, "~");
     } else {
         char* cwd = agetcwd();
-        if (!is_absolute_drive_fs_path(cwd)) {
-            dprintf(STDERR_FILENO, "%s: current directory must be in DriveFs\n", tool_name);
-            terminate = true;
+		if (!((strncmp(cwd, MNT_DRIVE_FS_PREFIX, strlen(MNT_DRIVE_FS_PREFIX)) == 0)
+			  && cwd[strlen(MNT_DRIVE_FS_PREFIX)] >= 'a'
+			  && cwd[strlen(MNT_DRIVE_FS_PREFIX)] <= 'z'
+			  && (cwd[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '/'
+				  || cwd[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '\0'))) {
+
+			char* wsl_root = getenv("WSL_PATH");
+			char* cwd_win32;
+			int i = strlen(wsl_root);
+			int cwd_len;
+
+			if (!((strncmp(cwd, "/home", 5) == 0)
+				  || (strncmp(cwd, "/root", 5) == 0)
+				  || (strncmp(cwd, "/data", 5) == 0))) {
+				i += strlen("\\rootfs");
+				cwd_len = i + strlen(cwd);
+				cwd_win32 = xmalloc(cwd_len + 1);
+				strcpy(cwd_win32, wsl_root);
+				strcat(cwd_win32, "\\rootfs");
+			} else {
+				cwd_len = i + strlen(cwd);
+				cwd_win32 = xmalloc(cwd_len + 1);
+				strcpy(cwd_win32, wsl_root);
+			}
+
+			strcat(cwd_win32, cwd);
+			for (; i < cwd_len; i++)
+				if (cwd_win32[i] == '/')
+					cwd_win32[i] = '\\';
+
+			string_append(&outbash_command, cwd_win32);
+			free(cwd_win32);
         } else {
             char* cwd_win32 = convert_drive_fs_path_to_win32(cwd);
             string_append(&outbash_command, cwd_win32);
@@ -977,12 +1007,65 @@ int main(int argc, char *argv[])
         break;
     }
 
-    bool sep = false;
-    for (int i = 0; i < argc; i++) {
-        if (sep) string_append(&outbash_command, " ");
-        string_append(&outbash_command, argv[i]);
-        sep = true;
-    }
+	for (int i = 0; i < argc; i++) {
+		char buf[PATH_MAX + 1];
+		char* cwd = argv[i];
+
+		//Trimming spaces for cases where extra spaces ruin the realpath
+		while (isspace(*cwd)) cwd++;
+		if (*cwd == 0)
+			continue;
+		char* end = cwd + strlen(cwd) - 1;
+		while (end > cwd && isspace(*end)) end--;
+
+		// Write new null terminator
+		*(end + 1) = 0;
+		cwd = realpath(cwd, buf);
+		if (cwd == NULL) cwd = argv[i];
+		if (cwd[0] == '/') {
+			if (!((strncmp(cwd, MNT_DRIVE_FS_PREFIX, strlen(MNT_DRIVE_FS_PREFIX)) == 0)
+				  && cwd[strlen(MNT_DRIVE_FS_PREFIX)] >= 'a'
+				  && cwd[strlen(MNT_DRIVE_FS_PREFIX)] <= 'z'
+				  && (cwd[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '/'
+					  || cwd[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '\0'))) {
+
+				char* wsl_root = getenv("WSL_PATH");
+				char* cwd_win32;
+				int i = strlen(wsl_root);
+				int cwd_len;
+
+				if (!((strncmp(cwd, "/home", 5) == 0)
+					  || (strncmp(cwd, "/root", 5) == 0)
+					  || (strncmp(cwd, "/data", 5) == 0))) {
+					i += strlen("\\rootfs");
+					cwd_len = i + strlen(cwd);
+					cwd_win32 = xmalloc(cwd_len + 1);
+					strcpy(cwd_win32, wsl_root);
+					strcat(cwd_win32, "\\rootfs");
+				} else {
+					cwd_len = i + strlen(cwd);
+					cwd_win32 = xmalloc(cwd_len + 1);
+					strcpy(cwd_win32, wsl_root);
+				}
+
+				strcat(cwd_win32, cwd);
+				for (; i < cwd_len; i++)
+					if (cwd_win32[i] == '/')
+						cwd_win32[i] = '\\';
+				string_append(&outbash_command, cwd_win32);
+				free(cwd_win32);
+			} else {
+				char* cwd_win32 = convert_drive_fs_path_to_win32(cwd);
+				string_append(&outbash_command, cwd_win32);
+				free(cwd_win32);
+			}
+		} else
+			string_append(&outbash_command, cwd);
+
+		if (i < argc - 1)
+			string_append(&outbash_command, " ");
+	}
+
     string_append(&outbash_command, "\n\n");
     //dprintf(STDOUT_FILENO, "%s", outbash_command.str);
     //return EXIT_FAILURE;
