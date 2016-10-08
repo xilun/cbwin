@@ -192,7 +192,7 @@ public:
         }
         return *this;
     }
-    CJobPidHandles(HANDLE hJob);
+    explicit CJobPidHandles(HANDLE hJob);
     ~CJobPidHandles();
 
     EActivity open_suspend_round(CJobPidHandles& previous);
@@ -409,7 +409,7 @@ CJobPidHandles::~CJobPidHandles()
 ////////////////////////////////////////////////////////////////////////////////
 class CSuspendedJobImpl {
 public:
-    CSuspendedJobImpl(HANDLE hJob);
+    explicit CSuspendedJobImpl(HANDLE hJob);
     void resume();
 private:
     void job_cpu_rate_limit();

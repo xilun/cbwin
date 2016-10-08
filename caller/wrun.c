@@ -784,6 +784,7 @@ static bool get_outbash_infos(int *port, bool *force_redirects)
         FILE *f = fopen(conf_file_path, "r");
         if (!f || !fread(buffer, 1, 15, f)) {
             dprintf(STDERR_FILENO, "%s: OUTBASH_PORT environment variable not set, and could not read %s\n", tool_name, conf_file_path);
+            if (f) fclose(f);
             return false;
         }
         fclose(f);
@@ -1118,7 +1119,7 @@ int main(int argc, char *argv[])
         if (FD_ISSET(sock_ctrl, &rfds)) {
             while (1) {
                 int nonblock_marker;
-                char *line = ctrl_readln(sock_ctrl, &nonblock_marker);
+                line = ctrl_readln(sock_ctrl, &nonblock_marker);
                 if (!line && nonblock_marker) break;
                 if (line && !strcmp(line, "suspend_ok")) {
                     if (state == SUSPEND_PENDING) {
