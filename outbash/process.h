@@ -32,7 +32,7 @@ class AttributeHandleList
 {
 public:
     AttributeHandleList();
-    AttributeHandleList(std::vector<HANDLE> handle_list);
+    explicit AttributeHandleList(std::vector<HANDLE> handle_list);
     LPPROC_THREAD_ATTRIBUTE_LIST    get_attribute_list_ptr() const { return m_pAttributeList.get(); }
 private:
     // note: order of the members matters (because of destruction order)

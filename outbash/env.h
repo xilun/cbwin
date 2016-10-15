@@ -31,7 +31,7 @@ class EnvVars
 {
 public:
     EnvVars() {}
-    EnvVars(from_system_type);
+    explicit EnvVars(from_system_type);
     std::wstring get_environment_block() const;
     void set_from_utf8(const char* s);
 

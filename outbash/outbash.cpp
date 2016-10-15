@@ -53,6 +53,7 @@
 
 using std::size_t;
 using std::uint16_t;
+using std::uint32_t;
 
 static EnvVars initial_env_vars(from_system);
 
@@ -130,21 +131,24 @@ public:
         if (!m_is_session) {
 
             /* non session outbash:
-             * outbash => bash.exe -c "OUTBASH=4242 bash "
-             * outbash params => bash.exe -c "OUTBASH=4242 bash <escaped(params)>"
-             * outbash ~ params => bash.exe ~ - c "OUTBASH=4242 bash <escaped(params)>"
+             * outbash => bash.exe -c "OUTBASH=4242 wcmd echo. ; OUTBASH=4242 exec bash "
+             * outbash params => bash.exe -c "OUTBASH=4242 wcmd echo. ; OUTBASH=4242 exec bash <escaped(params)>"
+             * outbash ~ params => bash.exe ~ -c "OUTBASH=4242 wcmd echo. ; OUTBASH=4242 exec bash <escaped(params)>"
              */
 
-            cmd_line += L"OUTBASH_PORT=" + std::to_wstring(port) + L" bash " + m_escaped_bash_cmd_line_params;
+            cmd_line +=   L"OUTBASH_PORT=" + std::to_wstring(port)
+                        + L" wcmd echo. ; OUTBASH_PORT=" + std::to_wstring(port)
+                        + L" exec bash " + m_escaped_bash_cmd_line_params;
 
         } else {
 
             /* session outbash:
-             * outbash --outbash-session => bash.exe -c "mkdir -p ~/.config/cbwin ; echo 4242 > ~/.config/cbwin/outbash_port ; OUTBASH=4242 exec bash "
+             * outbash --outbash-session => bash.exe -c "mkdir -p ~/.config/cbwin ; echo 4242 > ~/.config/cbwin/outbash_port ; OUTBASH=4242 wcmd echo. ; OUTBASH=4242 exec bash "
              */
 
             cmd_line +=   L"mkdir -p ~/.config/cbwin ; echo " + std::to_wstring(port)
                         + L" > ~/.config/cbwin/outbash_port ; OUTBASH_PORT=" + std::to_wstring(port)
+                        + L" wcmd echo. ; OUTBASH_PORT=" + std::to_wstring(port)
                         + L" exec bash " + m_escaped_bash_cmd_line_params;
         }
 
@@ -337,7 +341,7 @@ static int start_command(std::wstring cmdline,
                           CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | creation_flags,
                           (LPVOID)env, wdir, (STARTUPINFOW*)&si, &out_pi)) {
         Win32_perror("outbash: CreateProcess");
-        std::fprintf(stderr, "outbash: CreateProcess failed (%d) for command: %S\n", ::GetLastError(), cmdline.c_str());
+        std::fprintf(stderr, "outbash: CreateProcess failed (%lu) for command: %S\n", ::GetLastError(), cmdline.c_str());
         return 1;
     }
 
@@ -1054,7 +1058,7 @@ int main()
         DWORD wr = ::WaitForMultipleObjects(accept_event.is_valid() ? 2 : 1, wait_handles, FALSE, timeout);
         if (wr == WAIT_FAILED) {
             Win32_perror("outbash: WaitForMultipleObjects");
-            std::quick_exit(EXIT_FAILURE);
+            std::_Exit(EXIT_FAILURE);
         }
 
         reap_connections(vTConn);
@@ -1088,7 +1092,7 @@ int main()
                         break;
                     default:
                         Win32_perror("outbash: accept");
-                        std::quick_exit(EXIT_FAILURE);
+                        std::_Exit(EXIT_FAILURE);
                     }
                 } else {
                     CUniqueSocket usock(conn);
@@ -1106,7 +1110,7 @@ int main()
             }
         case WAIT_OBJECT_0:
             ::CloseHandle(pi.hProcess);
-            std::quick_exit(EXIT_SUCCESS);
+            std::_Exit(EXIT_SUCCESS);
             break;
         }
     }

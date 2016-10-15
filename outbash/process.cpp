@@ -23,6 +23,7 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <cstring>
 
 #include "process.h"
 #include "win_except.h"

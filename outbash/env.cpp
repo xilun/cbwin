@@ -30,13 +30,13 @@
 #include "env.h"
 #include "utf.h"
 
-const from_system_type from_system;
+const from_system_type from_system{};
 
 using std::size_t;
 
 EnvVars::EnvVars(from_system_type)
 {
-    std::unique_ptr<wchar_t, BOOL(_stdcall *)(wchar_t*)> uwinenv(GetEnvironmentStringsW(), &FreeEnvironmentStringsW);
+    std::unique_ptr<wchar_t, decltype(::FreeEnvironmentStringsW) *> uwinenv(::GetEnvironmentStringsW(), &::FreeEnvironmentStringsW);
 
     for (wchar_t* winenv = uwinenv.get(); *winenv; winenv += std::wcslen(winenv) + 1) {
         wchar_t* where = std::wcschr(winenv + 1, L'=');

@@ -27,9 +27,14 @@ add_executable(outbash
 add_definitions(/D_UNICODE /DUNICODE /DNOMINMAX)
 
 if(MSVC)
-    # Wall is basically unusable as is with MSVC, because it needlessly chokes
-    # on crt and system headers.
-    set_target_properties(outbash PROPERTIES COMPILE_FLAGS "/W4 /D_CRT_SECURE_NO_WARNINGS")
+
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set_target_properties(outbash PROPERTIES COMPILE_FLAGS "/Wall -Wextra")
+    else()
+        # Wall is basically unusable as is with MSVC, because it needlessly chokes
+        # on crt and system headers.
+        set_target_properties(outbash PROPERTIES COMPILE_FLAGS "/W4 /D_CRT_SECURE_NO_WARNINGS")
+    endif()
 
     set(variables
       CMAKE_C_FLAGS_DEBUG

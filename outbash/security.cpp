@@ -93,7 +93,7 @@ typedef std::unique_ptr<SECURITY_DESCRIPTOR, decltype(::LocalFree) *> TUniqueSec
 class CUniqueSecDesc : public TUniqueSecDescBase
 {
 public:
-    CUniqueSecDesc(PSECURITY_DESCRIPTOR pSecDesc) : TUniqueSecDescBase((SECURITY_DESCRIPTOR*)pSecDesc, &::LocalFree) { }
+    explicit CUniqueSecDesc(PSECURITY_DESCRIPTOR pSecDesc) : TUniqueSecDescBase((SECURITY_DESCRIPTOR*)pSecDesc, &::LocalFree) { }
 };
 
 static PSECURITY_DESCRIPTOR create_user_only_sd()
