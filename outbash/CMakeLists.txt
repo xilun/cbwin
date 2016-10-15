@@ -9,6 +9,8 @@ add_executable(outbash
                env.cpp
                process.h
                process.cpp
+               console.h
+               console.cpp
                win_except.h
                win_except.cpp
                ntsuspend.h

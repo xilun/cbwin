@@ -47,6 +47,7 @@
 #include "handle.h"
 #include "tcp_help.h"
 #include "security.h"
+#include "console.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -55,6 +56,7 @@ using std::uint16_t;
 using std::uint32_t;
 
 static EnvVars initial_env_vars(from_system);
+static CInOutConsoleModes in_out_console_modes;
 
 template <typename CharT>
 static bool is_ascii_letter(CharT c)
@@ -130,24 +132,22 @@ public:
         if (!m_is_session) {
 
             /* non session outbash:
-             * outbash => bash.exe -c "OUTBASH=4242 wcmd echo. ; OUTBASH=4242 exec bash "
-             * outbash params => bash.exe -c "OUTBASH=4242 wcmd echo. ; OUTBASH=4242 exec bash <escaped(params)>"
-             * outbash ~ params => bash.exe ~ -c "OUTBASH=4242 wcmd echo. ; OUTBASH=4242 exec bash <escaped(params)>"
+             * outbash => bash.exe -c "OUTBASH=4242 exec bash "
+             * outbash params => bash.exe -c "OUTBASH=4242 exec bash <escaped(params)>"
+             * outbash ~ params => bash.exe ~ -c "OUTBASH=4242 exec bash <escaped(params)>"
              */
 
             cmd_line +=   L"OUTBASH_PORT=" + std::to_wstring(port)
-                        + L" wcmd echo. ; OUTBASH_PORT=" + std::to_wstring(port)
                         + L" exec bash " + m_escaped_bash_cmd_line_params;
 
         } else {
 
             /* session outbash:
-             * outbash --outbash-session => bash.exe -c "mkdir -p ~/.config/cbwin ; echo 4242 > ~/.config/cbwin/outbash_port ; OUTBASH=4242 wcmd echo. ; OUTBASH=4242 exec bash "
+             * outbash --outbash-session => bash.exe -c "mkdir -p ~/.config/cbwin ; echo 4242 > ~/.config/cbwin/outbash_port ; OUTBASH=4242 exec bash "
              */
 
             cmd_line +=   L"mkdir -p ~/.config/cbwin ; echo " + std::to_wstring(port)
                         + L" > ~/.config/cbwin/outbash_port ; OUTBASH_PORT=" + std::to_wstring(port)
-                        + L" wcmd echo. ; OUTBASH_PORT=" + std::to_wstring(port)
                         + L" exec bash " + m_escaped_bash_cmd_line_params;
         }
 
@@ -701,6 +701,7 @@ private:
 
         void run()
         {
+            CInOutConsoleModes::CStateSwitchConsoleModes state_console_modes;
             CUniqueHandle job_handle;
             std::unique_ptr<OutbashStdRedirects> redir(nullptr);
             CUniqueHandle process_handle;
@@ -711,6 +712,7 @@ private:
                 std::wstring wrun;
                 std::wstring wcd;
                 std::unique_ptr<EnvVars> vars(nullptr);
+                std::uint32_t noredir_mask = CInOutConsoleModes::FULL_MASK;
                 auto vars_cp = [&] { if (!vars) vars.reset(new EnvVars(initial_env_vars)); return vars.get(); };
                 auto inst_redir = [&] { if (!redir) redir.reset(new OutbashStdRedirects); return redir.get(); };
                 bool silent_breakaway = false;
@@ -733,22 +735,25 @@ private:
                 while (1) {
                     std::string line = recv_line();
 
-                    if (line == "")
+                    if (line == "") {
                         break;
-                    else if (startswith<char>(line, "run:"))
+                    } else if (startswith<char>(line, "run:")) {
                         wrun = utf::widen(&line[4]);
-                    else if (startswith<char>(line, "cd:"))
+                    } else if (startswith<char>(line, "cd:")) {
                         wcd = utf::widen(&line[3]);
-                    else if (startswith<char>(line, "env:"))
+                    } else if (startswith<char>(line, "env:")) {
                         vars_cp()->set_from_utf8(&line[4]);
-                    else if (startswith<char>(line, "stdin:"))
+                    } else if (startswith<char>(line, "stdin:")) {
                         inst_redir()->parse_redir_param(StdRedirects::REDIR_STDIN, &line[6]);
-                    else if (startswith<char>(line, "stdout:"))
+                        noredir_mask &= ~CInOutConsoleModes::DIR_CONSOLE_IN_BIT;
+                    } else if (startswith<char>(line, "stdout:")) {
                         inst_redir()->parse_redir_param(StdRedirects::REDIR_STDOUT, &line[7]);
-                    else if (startswith<char>(line, "stderr:"))
+                        noredir_mask &= ~CInOutConsoleModes::DIR_CONSOLE_OUT_BIT;
+                    } else if (startswith<char>(line, "stderr:")) {
                         inst_redir()->parse_redir_param(StdRedirects::REDIR_STDERR, &line[7]);
-                    else if (line == "silent_breakaway:1")
+                    } else if (line == "silent_breakaway:1") {
                         silent_breakaway = true;
+                    }
                 }
 
                 if (redir.get()) {
@@ -784,6 +789,8 @@ private:
 
                 if (!::SetInformationJobObject(job_handle.get_unchecked(), JobObjectExtendedLimitInformation, &job_limit_infos, sizeof(job_limit_infos)))
                     throw_last_error("SetInformationJobObject");
+
+                state_console_modes = in_out_console_modes.get_orig_for((CInOutConsoleModes::dir_console_mask_e)noredir_mask);
 
                 if (start_command(wrun, wcd.c_str(), vars.get(), redir.get(), CREATE_SUSPENDED, pi) != 0)
                     return;
@@ -848,8 +855,10 @@ private:
                         // XXX: be mad about nul bytes and/or unknown commands?
                         if (line == "suspend") {
                             suspended_job = Suspend_Job_Object(job_handle.get_unchecked());
+                            state_console_modes.put_orig();
                             to_send = "suspend_ok\n";
                         } else if (line == "resume") {
+                            state_console_modes.get_orig();
                             suspended_job.resume();
                         }
                     }
@@ -892,6 +901,8 @@ private:
 
             // while process not finished:
             } while (wr != WAIT_OBJECT_0 + 1);
+
+            state_console_modes.put_orig();
 
             DWORD exit_code;
             if (!::GetExitCodeProcess(process_handle.get_checked(), &exit_code)) {
@@ -971,6 +982,7 @@ static void init_locale_console_cp()
 int main()
 {
     init_locale_console_cp();
+    in_out_console_modes.initialize_from_current_modes();
     if (init_winsock() != 0) std::exit(EXIT_FAILURE);
     if (!ImportNtDll()) {
         Win32_perror("outbash: ImportNtProcess");
