@@ -970,7 +970,7 @@ static void init_locale_console_cp()
 }
 
 #define XMING_CMD L"%s\\Xming.exe -br -multiwindow -clipboard -dpi %d -compositewm -wgl -silent-dup-error"
-static void optionally_start_xming()
+static void optionally_start_xserver()
 {
 	LPWSTR szXmingPath = NULL;
 	LPWSTR cmdBuf = NULL;
@@ -1040,7 +1040,7 @@ int main()
     CUniqueHandle accept_event = sock.create_auto_event(FD_ACCEPT);
 
 
-	optionally_start_xming();
+    optionally_start_xserver();
     PROCESS_INFORMATION pi;
     if (start_command(
             CCmdLine().new_cmd_line((unsigned)server_port),
