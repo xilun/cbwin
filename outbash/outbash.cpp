@@ -979,6 +979,15 @@ static void init_locale_console_cp()
     _setmbcp((int)cp);
 }
 
+static BOOL WINAPI CtrlHandlerRoutine(_In_ DWORD dwCtrlType)
+{
+    if (dwCtrlType == CTRL_C_EVENT) {
+        return TRUE;    // just ignore it
+    } else {
+        return FALSE;   // fallback to default handler
+    }
+}
+
 int main()
 {
     init_locale_console_cp();
@@ -1013,6 +1022,8 @@ int main()
 
     CUniqueHandle accept_event = sock.create_auto_event(FD_ACCEPT);
 
+    ::SetConsoleCtrlHandler(NULL, TRUE); // ignore Ctrl-C for now, bash.exe will inherit that attribute
+
     PROCESS_INFORMATION pi;
     if (start_command(
             CCmdLine().new_cmd_line((unsigned)server_port),
@@ -1021,6 +1032,9 @@ int main()
         std::exit(EXIT_FAILURE);
 
     ::CloseHandle(pi.hThread);
+
+    ::SetConsoleCtrlHandler(NULL, FALSE); // stop ignoring Ctrl-C (but see under)
+    ::SetConsoleCtrlHandler(CtrlHandlerRoutine, TRUE); // well, actually we will ignore it, but using a custom handler that is not inherited
 
     std::vector<ThreadConnection> vTConn;
 
