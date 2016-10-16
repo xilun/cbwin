@@ -59,6 +59,6 @@ if(MSVC)
         endif()
     endforeach()
 
-    target_link_libraries(outbash debug -NODEFAULTLIB:libucrtd.lib debug ucrtd.lib)
-    target_link_libraries(outbash optimized -NODEFAULTLIB:libucrt.lib optimized ucrt.lib)
+    target_link_libraries(outbash debug -NODEFAULTLIB:libucrtd.lib debug ucrtd.lib Shlwapi.lib)
+    target_link_libraries(outbash optimized -NODEFAULTLIB:libucrt.lib optimized ucrt.lib Shlwapi.lib)
 endif()
