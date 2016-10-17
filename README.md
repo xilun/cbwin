@@ -146,10 +146,11 @@ Other example to launch `msbuild` to rebuild `outbash.exe`, which shows that ret
 
 # warnings
 
-For now running *interactive* Win32 console tools in the same console as a WSL bash session (for example: `wrun cmd`
-or `wcmd python`) does not work well. The main problems seem to be related to the console switching internal modes
-(charset, but not only) between the Win32 and the WSL world. I don't know yet if something nice enough to use in that
-regard can be achieved without some changes from MS about how their stuff works. (This might be somehow related to WSL
-not working well, for now, with ConEmu or Bitvise SSH Server - but I'm not really sure about that)
+
+For now, *interactive* Win32 console tools in the same console as a WSL bash session (for example: `wrun cmd`
+or `wcmd python`) do not work well. The problems seem to be related to the console switching internal modes
+(charset, but not only) between the Win32 and the WSL world, and some input being directed to WSL even when there
+is no need to do so. I don't know yet if something nice enough to use in that regard can be achieved without some
+changes from MS about how their stuff works.
 
 It is an unfinished work in progress. There are various stuff not-implemented and maybe tons of bugs.
