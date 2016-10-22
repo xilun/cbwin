@@ -361,10 +361,10 @@ static void ask_redirect(struct string* command, const char* field, int stdfd, i
     if (std_fd_info[stdfd].redirect) {
         string_append(command, field);
         if (std_fd_info[stdfd].is_bad || std_fd_info[stdfd].is_dev_null) {
-            string_append(command, "nul");
+            string_append(command, "nul\n");
         } else {
             char buf[32];
-            (void)snprintf(buf, 32, "redirect=%d", port);
+            (void)snprintf(buf, 32, "redirect=%d\n", port);
             string_append(command, buf);
         }
     }
@@ -876,20 +876,19 @@ int main(int argc, char *argv[])
     int port;
     bool terminate = !get_outbash_infos(&port, &force_redirects);
 
-    struct string outbash_command = string_create("cd:");
+    struct string outbash_command = string_create("");
 
     shift(&argc, &argv);
     if (argc && argv[0][0] == ':' && argv[0][1] == '\0') {
         shift(&argc, &argv);
-        string_append(&outbash_command, "~");
+        string_append(&outbash_command, "cd:~\n");
     } else {
         char* cwd = agetcwd();
-        if (!is_absolute_drive_fs_path(cwd)) {
-            dprintf(STDERR_FILENO, "%s: current directory must be in DriveFs\n", tool_name);
-            terminate = true;
-        } else {
+        if (is_absolute_drive_fs_path(cwd)) {
             char* cwd_win32 = convert_drive_fs_path_to_win32(cwd);
+            string_append(&outbash_command, "cd:");
             string_append(&outbash_command, cwd_win32);
+            string_append(&outbash_command, "\n");
             free(cwd_win32);
         }
         free(cwd);
@@ -906,8 +905,9 @@ int main(int argc, char *argv[])
             shift(&argc, &argv);
             while (argc && strncmp(argv[0], "--", 2) != 0
                         && *argv[0] != '\0' && strchr(argv[0] + 1, '=')) {
-                string_append(&outbash_command, "\nenv:");
+                string_append(&outbash_command, "env:");
                 string_append(&outbash_command, argv[0]);
+                string_append(&outbash_command, "\n");
                 shift(&argc, &argv);
             }
         } else if (!strcmp(argv[0], "--force-redirects")) {
@@ -958,23 +958,23 @@ int main(int argc, char *argv[])
     if (redirects & STDIN_NEEDS_SOCKET_REDIRECT) lsock_in = socket_listen_one_loopback();
     if (redirects & STDOUT_NEEDS_SOCKET_REDIRECT) lsock_out = socket_listen_one_loopback();
     if (redirects & STDERR_NEEDS_SOCKET_REDIRECT) lsock_err = socket_listen_one_loopback();
-    ask_redirect(&outbash_command, "\nstdin:", STDIN_FILENO, lsock_in.port);
-    ask_redirect(&outbash_command, "\nstdout:", STDOUT_FILENO, lsock_out.port);
-    ask_redirect(&outbash_command, "\nstderr:", STDERR_FILENO,
+    ask_redirect(&outbash_command, "stdin:", STDIN_FILENO, lsock_in.port);
+    ask_redirect(&outbash_command, "stdout:", STDOUT_FILENO, lsock_out.port);
+    ask_redirect(&outbash_command, "stderr:", STDERR_FILENO,
                  (redirects & STDERR_NEEDS_SOCKET_REDIRECT) ? lsock_err.port : lsock_out.port);
 
     if (silent_breakaway)
-        string_append(&outbash_command, "\nsilent_breakaway:1");
+        string_append(&outbash_command, "silent_breakaway:1\n");
 
     switch (tool) {
     case TOOL_WRUN:
-        string_append(&outbash_command, "\nrun:");
+        string_append(&outbash_command, "run:");
         break;
     case TOOL_WCMD:
-        string_append(&outbash_command, "\nrun:cmd /C ");
+        string_append(&outbash_command, "run:cmd /C ");
         break;
     case TOOL_WSTART:
-        string_append(&outbash_command, "\nrun:cmd /C start ");
+        string_append(&outbash_command, "run:cmd /C start ");
         break;
     }
 
