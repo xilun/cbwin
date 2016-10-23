@@ -130,24 +130,21 @@ public:
         if (!m_is_session) {
 
             /* non session outbash:
-             * outbash => bash.exe -c "OUTBASH=4242 wcmd echo. ; OUTBASH=4242 exec bash "
-             * outbash params => bash.exe -c "OUTBASH=4242 wcmd echo. ; OUTBASH=4242 exec bash <escaped(params)>"
-             * outbash ~ params => bash.exe ~ -c "OUTBASH=4242 wcmd echo. ; OUTBASH=4242 exec bash <escaped(params)>"
+             * outbash => bash.exe -c "OUTBASH=4242 bash "
+             * outbash params => bash.exe -c "OUTBASH=4242 bash <escaped(params)>"
+             * outbash ~ params => bash.exe ~ - c "OUTBASH=4242 bash <escaped(params)>"
              */
 
-            cmd_line +=   L"OUTBASH_PORT=" + std::to_wstring(port)
-                        + L" wcmd echo. ; OUTBASH_PORT=" + std::to_wstring(port)
-                        + L" exec bash " + m_escaped_bash_cmd_line_params;
+            cmd_line += L"OUTBASH_PORT=" + std::to_wstring(port) + L" bash " + m_escaped_bash_cmd_line_params;
 
         } else {
 
             /* session outbash:
-             * outbash --outbash-session => bash.exe -c "mkdir -p ~/.config/cbwin ; echo 4242 > ~/.config/cbwin/outbash_port ; OUTBASH=4242 wcmd echo. ; OUTBASH=4242 exec bash "
+             * outbash --outbash-session => bash.exe -c "mkdir -p ~/.config/cbwin ; echo 4242 > ~/.config/cbwin/outbash_port ; OUTBASH=4242 exec bash "
              */
 
             cmd_line +=   L"mkdir -p ~/.config/cbwin ; echo " + std::to_wstring(port)
                         + L" > ~/.config/cbwin/outbash_port ; OUTBASH_PORT=" + std::to_wstring(port)
-                        + L" wcmd echo. ; OUTBASH_PORT=" + std::to_wstring(port)
                         + L" exec bash " + m_escaped_bash_cmd_line_params;
         }
 
