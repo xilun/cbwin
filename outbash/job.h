@@ -5,7 +5,7 @@ class CSuspendedJobImpl;
 class CSuspendedJob {
 public:
     friend CSuspendedJob Suspend_Job_Object(HANDLE hJob);
-    void resume();
+    void resume(); // Postcondition: this->is_empty()
 
     // C++ is too shitty to allow usable and efficient pImpl designs based on unique_ptr,
     // so we have to also write all the boring stuff ourselves :/
@@ -17,13 +17,12 @@ public:
     CSuspendedJob(CSuspendedJob&& other) : m_pImpl(other.m_pImpl) { other.m_pImpl = nullptr; }
     CSuspendedJob& operator=(CSuspendedJob&& other)
     {
-        if (this != &other) {
-            free_pimpl();
-            m_pImpl = other.m_pImpl;
-            other.m_pImpl = nullptr;
-        }
+        free_pimpl();
+        m_pImpl = other.m_pImpl;
+        other.m_pImpl = nullptr;
         return *this;
     }
+    bool is_empty() const { return m_pImpl == nullptr; }
     ~CSuspendedJob();
 
 private:
@@ -34,4 +33,5 @@ private:
 // A free function is preferred to a constructor or a static method here:
 //  - with a constructor:   'CSuspendedJob suspended_job(hJob);'  would not be very clear.
 //  - with a static method: 'CSuspendedJob suspended_job; suspended_job.Suspend_Job_Object(hJob);'  would compile but would be an error.
+// Postcondition: !result.is_empty()
 CSuspendedJob Suspend_Job_Object(HANDLE hJob);

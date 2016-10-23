@@ -853,11 +853,11 @@ private:
 
                     if (try_get_line) {
                         // XXX: be mad about nul bytes and/or unknown commands?
-                        if (line == "suspend") {
+                        if (line == "suspend" && suspended_job.is_empty()) {
                             suspended_job = Suspend_Job_Object(job_handle.get_unchecked());
                             state_console_modes.put_orig();
                             to_send = "suspend_ok\n";
-                        } else if (line == "resume") {
+                        } else if (line == "resume" && !suspended_job.is_empty()) {
                             state_console_modes.get_orig();
                             suspended_job.resume();
                         }
