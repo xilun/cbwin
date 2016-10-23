@@ -98,6 +98,16 @@ static void* xrealloc(void *ptr, size_t sz)
     return result;
 }
 
+static char* xstrdup(const char* s)
+{
+    char* result = strdup(s);
+    if (result == NULL) {
+        output_err("strdup failed\n");
+        abort();
+    }
+    return result;
+}
+
 #define STRERROR_BUFFER_SIZE    2048
 static __thread char tls_strerror_buffer[STRERROR_BUFFER_SIZE];
 
@@ -155,6 +165,7 @@ static ssize_t send_all(const int sockfd, const void *buffer, const size_t lengt
     return (ssize_t)where;
 }
 
+// precondition: is_absolute_drive_fs_path(path)
 static char* convert_drive_fs_path_to_win32(const char* path)
 {
     char* result = xmalloc(4 + strlen(path));
@@ -754,11 +765,11 @@ static char *get_homedir_dup(void)
 {
     char *homedir = getenv("HOME");
     if (homedir)
-        return strdup(homedir);
+        return xstrdup(homedir);
     struct passwd *p = getpwuid(getuid());
     if (!p)
         return NULL;
-    return strdup(p->pw_dir);
+    return xstrdup(p->pw_dir);
 }
 
 static bool get_outbash_infos(int *port, bool *force_redirects)
