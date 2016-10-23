@@ -283,7 +283,8 @@ static bool path_is_really_absolute(const wchar_t* path)
     return false;
 }
 
-static int start_command(std::wstring cmdline,
+static int start_command(const wchar_t* module,
+                         std::wstring cmdline,
                          const wchar_t* dir,
                          EnvVars* vars,
                          StdRedirects* redirs,
@@ -311,9 +312,13 @@ static int start_command(std::wstring cmdline,
             wdir = dir;
     }
 
-    const wchar_t* module = NULL;
-    if (wstr_case_ascii_ncmp(cmdline.c_str(), L"cmd", 3) == 0 && (is_cmd_line_sep(cmdline[3]) || cmdline[3] == L'\0'))
-        module = comspec.c_str();
+    const wchar_t* wmodule = nullptr;
+    if (module == nullptr || module[0] == L'\0') {
+        if (wstr_case_ascii_ncmp(cmdline.c_str(), L"cmd", 3) == 0 && (is_cmd_line_sep(cmdline[3]) || cmdline[3] == L'\0'))
+            wmodule = comspec.c_str();
+    } else {
+        wmodule = module;
+    }
 
     const wchar_t* env = nullptr;
     std::wstring wbuf;
@@ -333,11 +338,14 @@ static int start_command(std::wstring cmdline,
         ahl = redirs->attribute_handle_list();
         si.lpAttributeList = ahl.get_attribute_list_ptr();
     }
-    if (!::CreateProcessW(module, &cmdline[0], NULL, NULL, inherit_handles,
+    if (!::CreateProcessW(wmodule, &cmdline[0], NULL, NULL, inherit_handles,
                           CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | creation_flags,
                           (LPVOID)env, wdir, (STARTUPINFOW*)&si, &out_pi)) {
         Win32_perror("outbash: CreateProcess");
-        std::fprintf(stderr, "outbash: CreateProcess failed (%lu) for command: %S\n", ::GetLastError(), cmdline.c_str());
+        std::fprintf(stderr, "outbash: CreateProcess failed (%lu) for module %c%S%c command: %S\n",
+                     ::GetLastError(),
+                     wmodule == nullptr ? '<' : '"', wmodule == nullptr ? L"NULL" : wmodule, wmodule == nullptr ? '>' : '"',
+                     cmdline.c_str());
         return 1;
     }
 
@@ -705,6 +713,7 @@ private:
             // scope for locals lifetime:
             {
                 PROCESS_INFORMATION pi;
+                std::wstring wmodule;
                 std::wstring wrun;
                 std::wstring wcd;
                 std::unique_ptr<EnvVars> vars(nullptr);
@@ -732,6 +741,8 @@ private:
 
                     if (line == "")
                         break;
+                    else if (startswith<char>(line, "module:"))
+                        wmodule = utf::widen(&line[7]);
                     else if (startswith<char>(line, "run:"))
                         wrun = utf::widen(&line[4]);
                     else if (startswith<char>(line, "cd:"))
@@ -782,7 +793,7 @@ private:
                 if (!::SetInformationJobObject(job_handle.get_unchecked(), JobObjectExtendedLimitInformation, &job_limit_infos, sizeof(job_limit_infos)))
                     throw_last_error("SetInformationJobObject");
 
-                if (start_command(wrun, wcd.c_str(), vars.get(), redir.get(), CREATE_SUSPENDED, pi) != 0)
+                if (start_command(wmodule.c_str(), wrun, wcd.c_str(), vars.get(), redir.get(), CREATE_SUSPENDED, pi) != 0)
                     return;
 
                 process_handle = CUniqueHandle(pi.hProcess);
@@ -1011,6 +1022,7 @@ int main()
 
     PROCESS_INFORMATION pi;
     if (start_command(
+            nullptr,
             CCmdLine().new_cmd_line((unsigned)server_port),
             nullptr, nullptr, nullptr, 0,
             pi) != 0)

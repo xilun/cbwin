@@ -977,6 +977,22 @@ int main(int argc, char *argv[])
     if (silent_breakaway)
         string_append(&outbash_command, "silent_breakaway:1\n");
 
+    if (tool == TOOL_WRUN) {
+        if (is_absolute_drive_fs_path(argv[0])) {
+            char* win32_abs_exe = convert_drive_fs_path_to_win32(argv[0]);
+            string_append(&outbash_command, "module:");
+            string_append(&outbash_command, win32_abs_exe);
+            string_append(&outbash_command, "\n");
+            size_t win32_abs_exe_len = strlen(win32_abs_exe);
+            argv[0] = xmalloc(win32_abs_exe_len + 3);
+            argv[0][0] = '"';
+            memcpy(&argv[0][1], win32_abs_exe, win32_abs_exe_len);
+            argv[0][1+win32_abs_exe_len] = '"';
+            argv[0][2+win32_abs_exe_len] = 0;
+            free(win32_abs_exe);
+        }
+    }
+
     switch (tool) {
     case TOOL_WRUN:
         string_append(&outbash_command, "run:");
