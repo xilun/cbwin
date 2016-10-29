@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
+rm -f /usr/local/bin/{wrun,wcmd,wstart}
 cp wrun /usr/local/bin
+cp wcmd /usr/local/bin
 cd /usr/local/bin
-rm -f wcmd wstart
-ln wrun wcmd
-ln wrun wstart
+ln wcmd wstart
