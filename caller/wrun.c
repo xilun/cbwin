@@ -40,73 +40,12 @@
 #include <netinet/in.h>
 #include <pwd.h>
 
+#include "common.h"
+
 #define MY_DYNAMIC_PATH_MAX (32768*3 + 32)
 #define MNT_DRIVE_FS_PREFIX "/mnt/"
 
-enum tool_e
-{
-    TOOL_WRUN,
-    TOOL_WCMD,
-    TOOL_WSTART
-};
-
-static const char* tool_name;
-
-static void output_err(const char* s)
-{
-    ssize_t len = (ssize_t)strlen(s);
-    ssize_t where = 0;
-    while (len - where > 0) {
-        ssize_t res = write(STDERR_FILENO, s + where, len - where);
-        if (res < 0) {
-            if (errno != EINTR)
-                return;
-        } else {
-            where += res;
-        }
-    }
-}
-
-static void terminate_nocore() __attribute__ ((noreturn));
-static void terminate_nocore()
-{
-    // we use SIGKILL because it's reliable, does not dump core, and Windows
-    // does not have it, so if we ever get crazy enough to propagate
-    // termination by signal, the caller will still be able to distinguish
-    // between local and Win32 failures.
-    kill(getpid(), SIGKILL);
-    abort(); // fallback, should not happen
-}
-
-static void* xmalloc(size_t sz)
-{
-    void* result = malloc(sz);
-    if (result == NULL) {
-        output_err("malloc failed\n");
-        abort();
-    }
-    return result;
-}
-
-static void* xrealloc(void *ptr, size_t sz)
-{
-    void* result = realloc(ptr, sz);
-    if (result == NULL) {
-        output_err("realloc failed\n");
-        abort();
-    }
-    return result;
-}
-
-static char* xstrdup(const char* s)
-{
-    char* result = strdup(s);
-    if (result == NULL) {
-        output_err("strdup failed\n");
-        abort();
-    }
-    return result;
-}
+static const char* tool_name = "wrun";
 
 #define STRERROR_BUFFER_SIZE    2048
 static __thread char tls_strerror_buffer[STRERROR_BUFFER_SIZE];
@@ -237,32 +176,6 @@ static void string_destroy(struct string* s)
     s->str = NULL;
     s->capacity = 0;
     s->length = 0;
-}
-
-static int get_tool(const char* argv0)
-{
-    const char* s = strrchr(argv0, '/');
-    tool_name = (s == NULL) ? argv0 : s + 1;
-    if (!strcmp(tool_name, "wcmd")) {
-        return TOOL_WCMD;
-    } else if (!strcmp(tool_name, "wrun")) {
-        return TOOL_WRUN;
-    } else if (!strcmp(tool_name, "wstart")) {
-        return TOOL_WSTART;
-    } else {
-        dprintf(STDERR_FILENO, "%s: unrecognized program name (should be wcmd, wrun, or wstart)\n", argv0);
-        terminate_nocore();
-    }
-}
-
-static void shift(int *pargc, char ***pargv)
-{
-    if (pargc) {
-        (*pargc)--;
-        (*pargv)++;
-    } else {
-        abort();
-    }
 }
 
 static void check_argc(int argc)
@@ -827,11 +740,11 @@ static void print_help(void)
     "\n"
     "There are three variations of this command: wcmd, wrun and wstart\n"
     "\n"
+    "  * wrun   runs a Windows program using CreateProcess and waits for it to exit.\n"
+    "           Example: 'wrun notepad'\n"
+    "\n"
     "  * wcmd   runs a Windows command with cmd.exe and waits for its completion.\n"
     "           Example: 'wcmd dir'\n"
-    "\n"
-    "  * wrun   runs a Windows command using CreateProcess and waits for it to exit.\n"
-    "           Example: 'wrun notepad'\n"
     "\n"
     "  * wstart runs a Windows command in background as using 'start' from cmd.exe.\n"
     "           Example: 'wstart http://microsoft.com/'\n"
@@ -872,25 +785,28 @@ static void print_help(void)
 int main(int argc, char *argv[])
 {
     if (argc < 1) {
-        dprintf(STDERR_FILENO, "wcmd/wrun/wstart called without argument\n");
+        dprintf(STDERR_FILENO, "wrun called without argument\n");
         terminate_nocore();
     }
-    int tool = get_tool(argv[0]);
+    shift(&argc, &argv);
+    if (argc > 1 && !strcmp(argv[0], "--tool_name")) {
+        shift(&argc, &argv);
+        tool_name = shift(&argc, &argv);
+    }
 
     fill_std_fd_info_identity(STDIN_FILENO);
     fill_std_fd_info_identity(STDOUT_FILENO);
     fill_std_fd_info_identity(STDERR_FILENO);
 
     bool force_redirects = false;
-    bool silent_breakaway = (tool == TOOL_WSTART);
+    bool silent_breakaway = false;
 
     int port;
     bool terminate = !get_outbash_infos(&port, &force_redirects);
 
     struct string outbash_command = string_create("");
 
-    shift(&argc, &argv);
-    if (argc && argv[0][0] == ':' && argv[0][1] == '\0') {
+    if (argc && !strcmp(argv[0], ":")) {
         shift(&argc, &argv);
         string_append(&outbash_command, "cd:~\n");
     } else {
@@ -977,33 +893,21 @@ int main(int argc, char *argv[])
     if (silent_breakaway)
         string_append(&outbash_command, "silent_breakaway:1\n");
 
-    if (tool == TOOL_WRUN) {
-        if (is_absolute_drive_fs_path(argv[0])) {
-            char* win32_abs_exe = convert_drive_fs_path_to_win32(argv[0]);
-            string_append(&outbash_command, "module:");
-            string_append(&outbash_command, win32_abs_exe);
-            string_append(&outbash_command, "\n");
-            size_t win32_abs_exe_len = strlen(win32_abs_exe);
-            argv[0] = xmalloc(win32_abs_exe_len + 3);
-            argv[0][0] = '"';
-            memcpy(&argv[0][1], win32_abs_exe, win32_abs_exe_len);
-            argv[0][1+win32_abs_exe_len] = '"';
-            argv[0][2+win32_abs_exe_len] = 0;
-            free(win32_abs_exe);
-        }
+    if (is_absolute_drive_fs_path(argv[0])) {
+        char* win32_abs_exe = convert_drive_fs_path_to_win32(argv[0]);
+        string_append(&outbash_command, "module:");
+        string_append(&outbash_command, win32_abs_exe);
+        string_append(&outbash_command, "\n");
+        size_t win32_abs_exe_len = strlen(win32_abs_exe);
+        argv[0] = xmalloc(win32_abs_exe_len + 3);
+        argv[0][0] = '"';
+        memcpy(&argv[0][1], win32_abs_exe, win32_abs_exe_len);
+        argv[0][1+win32_abs_exe_len] = '"';
+        argv[0][2+win32_abs_exe_len] = 0;
+        free(win32_abs_exe);
     }
 
-    switch (tool) {
-    case TOOL_WRUN:
-        string_append(&outbash_command, "run:");
-        break;
-    case TOOL_WCMD:
-        string_append(&outbash_command, "run:cmd /C ");
-        break;
-    case TOOL_WSTART:
-        string_append(&outbash_command, "run:cmd /C start ");
-        break;
-    }
+    string_append(&outbash_command, "run:");
 
     bool sep = false;
     for (int i = 0; i < argc; i++) {
