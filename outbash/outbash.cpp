@@ -656,9 +656,9 @@ private:
             m_buf.resize(buf_orig_size + ctrl_recv_block_size);
             int res = ::recv(m_usock.get(), &m_buf[buf_orig_size], ctrl_recv_block_size, 0);
             if (res < 0) {
-                DWORD err = GetLastError();
+                DWORD err = ::GetLastError();
                 m_buf.resize(buf_orig_size);
-                SetLastError(err);
+                ::SetLastError(err);
                 return res;
             }
             m_buf.resize(buf_orig_size + res);
@@ -739,24 +739,25 @@ private:
                 while (1) {
                     std::string line = recv_line();
 
-                    if (line == "")
+                    if (line == "") {
                         break;
-                    else if (startswith<char>(line, "module:"))
+                    } else if (startswith<char>(line, "module:")) {
                         wmodule = utf::widen(&line[7]);
-                    else if (startswith<char>(line, "run:"))
+                    } else if (startswith<char>(line, "run:")) {
                         wrun = utf::widen(&line[4]);
-                    else if (startswith<char>(line, "cd:"))
+                    } else if (startswith<char>(line, "cd:")) {
                         wcd = utf::widen(&line[3]);
-                    else if (startswith<char>(line, "env:"))
+                    } else if (startswith<char>(line, "env:")) {
                         vars_cp()->set_from_utf8(&line[4]);
-                    else if (startswith<char>(line, "stdin:"))
+                    } else if (startswith<char>(line, "stdin:")) {
                         inst_redir()->parse_redir_param(StdRedirects::REDIR_STDIN, &line[6]);
-                    else if (startswith<char>(line, "stdout:"))
+                    } else if (startswith<char>(line, "stdout:")) {
                         inst_redir()->parse_redir_param(StdRedirects::REDIR_STDOUT, &line[7]);
-                    else if (startswith<char>(line, "stderr:"))
+                    } else if (startswith<char>(line, "stderr:")) {
                         inst_redir()->parse_redir_param(StdRedirects::REDIR_STDERR, &line[7]);
-                    else if (line == "silent_breakaway:1")
+                    } else if (line == "silent_breakaway:1") {
                         silent_breakaway = true;
+                    }
                 }
 
                 if (redir.get()) {
@@ -880,7 +881,7 @@ private:
                 if (!try_get_line && !to_send && !ctrl_socket_failed) {
                     int r = buf_recv();
                     if (r < 0) {
-                        if (WSAGetLastError() != WSAEWOULDBLOCK)
+                        if (::GetLastError() != WSAEWOULDBLOCK)
                             throw_last_error("buf_recv"); // XXX not ideal
                     } else {
                         try_get_line = !!r;
