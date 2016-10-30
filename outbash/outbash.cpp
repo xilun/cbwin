@@ -908,6 +908,7 @@ private:
                 exit_code = (DWORD)-1;
             }
             process_handle.close();
+            job_handle.close();
 
             if (redir.get())
                 redir.get()->close();
