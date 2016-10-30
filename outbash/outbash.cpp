@@ -40,7 +40,7 @@
 
 #include "utf.h"
 #include "env.h"
-#include "process.h"
+#include "redirects.h"
 #include "win_except.h"
 #include "job.h"
 #include "ntsuspend.h"

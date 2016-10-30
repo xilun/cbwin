@@ -25,7 +25,7 @@
 #include <algorithm>
 #include <cstring>
 
-#include "process.h"
+#include "redirects.h"
 #include "win_except.h"
 
 static void attribute_list_deleter(LPPROC_THREAD_ATTRIBUTE_LIST attribute_list)
