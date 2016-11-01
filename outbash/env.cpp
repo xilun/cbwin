@@ -36,7 +36,7 @@ using std::size_t;
 
 bool CompareEnvVarName::operator()(const std::wstring& a, const std::wstring& b) const
 {
-    return CSTR_LESS_THAN == CompareStringOrdinal(a.c_str(), (int)a.length(), b.c_str(), (int)b.length(), TRUE);
+    return CSTR_LESS_THAN == ::CompareStringOrdinal(a.c_str(), (int)a.length(), b.c_str(), (int)b.length(), TRUE);
 }
 
 EnvVars::EnvVars(from_system_type)

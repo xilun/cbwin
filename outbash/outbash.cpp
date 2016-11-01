@@ -54,7 +54,7 @@ using std::size_t;
 using std::uint16_t;
 using std::uint32_t;
 
-static EnvVars initial_env_vars(from_system);
+static const EnvVars initial_env_vars(from_system);
 
 template <typename CharT>
 static bool is_ascii_letter(CharT c)
