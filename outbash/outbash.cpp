@@ -215,9 +215,9 @@ private:
 
     static std::wstring get_default_bash_launcher()
     {
-        wchar_t buf[MAX_PATH+1];
-        UINT res = ::GetSystemDirectoryW(buf, MAX_PATH+1);
-        if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "outbash: GetSystemDirectory error\n"); std::abort(); }
+        wchar_t buf[MAX_PATH];
+        UINT res = ::GetSystemDirectoryW(buf, MAX_PATH);
+        if (res == 0 || res >= MAX_PATH) { std::fprintf(stderr, "outbash: GetSystemDirectory error\n"); std::abort(); }
         return buf + std::wstring(L"\\bash.exe");
     }
 
@@ -230,14 +230,14 @@ private:
 
 static std::wstring get_comspec()
 {
-    wchar_t buf[MAX_PATH+1];
-    UINT res = ::GetEnvironmentVariableW(L"ComSpec", buf, MAX_PATH+1);
+    wchar_t buf[MAX_PATH];
+    UINT res = ::GetEnvironmentVariableW(L"ComSpec", buf, MAX_PATH);
     if (res == 0 && ::GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
-        res = ::GetSystemDirectoryW(buf, MAX_PATH+1);
-        if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "outbash: GetSystemDirectory error\n"); std::abort(); }
+        res = ::GetSystemDirectoryW(buf, MAX_PATH);
+        if (res == 0 || res >= MAX_PATH) { std::fprintf(stderr, "outbash: GetSystemDirectory error\n"); std::abort(); }
         return buf + std::wstring(L"\\cmd.exe");
     } else {
-        if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "outbash: GetEnvironmentVariable ComSpec error\n"); std::abort(); }
+        if (res == 0 || res >= MAX_PATH) { std::fprintf(stderr, "outbash: GetEnvironmentVariable ComSpec error\n"); std::abort(); }
         return buf;
     }
 }
@@ -245,13 +245,13 @@ static const std::wstring comspec = get_comspec();
 
 static std::wstring get_userprofile()
 {
-    wchar_t buf[MAX_PATH+1];
-    UINT res = ::GetEnvironmentVariableW(L"USERPROFILE", buf, MAX_PATH+1);
+    wchar_t buf[MAX_PATH];
+    UINT res = ::GetEnvironmentVariableW(L"USERPROFILE", buf, MAX_PATH);
     if (res == 0 && ::GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
         std::fprintf(stderr, "outbash: warning: USERPROFILE environment variable not found\n");
         return L"";
     } else {
-        if (res == 0 || res > MAX_PATH) { std::fprintf(stderr, "outbash: GetEnvironmentVariable USERPROFILE error\n"); std::abort(); }
+        if (res == 0 || res >= MAX_PATH) { std::fprintf(stderr, "outbash: GetEnvironmentVariable USERPROFILE error\n"); std::abort(); }
         return buf;
     }
 }
