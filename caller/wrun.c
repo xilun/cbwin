@@ -112,7 +112,7 @@ static char* convert_drive_fs_path_to_win32(const char* path)
     result[1] = ':';
     result[2] = '\\';
     strcpy(result + 3, path + strlen(MNT_DRIVE_FS_PREFIX) + 2);
-    int i;
+    size_t i;
     for (i = 3; result[i]; i++)
         if (result[i] == '/')
             result[i] = '\\';
@@ -126,6 +126,17 @@ static bool is_absolute_drive_fs_path(const char* s)
            && s[strlen(MNT_DRIVE_FS_PREFIX)] <= 'z'
            && (s[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '/'
                || s[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '\0');
+}
+
+static char* convert_slash_to_backslash(const char* path)
+{
+    char* result = xstrdup(path);
+    size_t i;
+    for (i = 0; result[i]; i++) {
+        if (result[i] == '/')
+            result[i] = '\\';
+    }
+    return result;
 }
 
 struct string {
@@ -893,27 +904,29 @@ int main(int argc, char *argv[])
     if (silent_breakaway)
         string_append(&outbash_command, "silent_breakaway:1\n");
 
+    char* win32_module;
     if (is_absolute_drive_fs_path(argv[0])) {
-        char* win32_abs_exe = convert_drive_fs_path_to_win32(argv[0]);
+        win32_module = convert_drive_fs_path_to_win32(argv[0]);
         string_append(&outbash_command, "module:");
-        string_append(&outbash_command, win32_abs_exe);
+        string_append(&outbash_command, win32_module);
         string_append(&outbash_command, "\n");
-        size_t win32_abs_exe_len = strlen(win32_abs_exe);
-        argv[0] = xmalloc(win32_abs_exe_len + 3);
-        argv[0][0] = '"';
-        memcpy(&argv[0][1], win32_abs_exe, win32_abs_exe_len);
-        argv[0][1+win32_abs_exe_len] = '"';
-        argv[0][2+win32_abs_exe_len] = 0;
-        free(win32_abs_exe);
+    } else {
+        win32_module = convert_slash_to_backslash(argv[0]);
     }
 
+    const bool module_need_quotes = (NULL != strpbrk(win32_module, " \t"));
     string_append(&outbash_command, "run:");
+    if (module_need_quotes)
+        string_append(&outbash_command, "\"");
+    string_append(&outbash_command, win32_module);
+    if (module_need_quotes)
+        string_append(&outbash_command, "\"");
 
-    bool sep = false;
-    for (int i = 0; i < argc; i++) {
-        if (sep) string_append(&outbash_command, " ");
+    free(win32_module);
+
+    for (int i = 1; i < argc; i++) {
+        string_append(&outbash_command, " ");
         string_append(&outbash_command, argv[i]);
-        sep = true;
     }
     string_append(&outbash_command, "\n\n");
     //dprintf(STDOUT_FILENO, "%s", outbash_command.str);

@@ -125,10 +125,12 @@ int main(int argc, char *argv[])
     }
     switch (tool) {
     case TOOL_WCMD:
-        push_sarg(&sa, "cmd /C");
+        push_sarg(&sa, "cmd");
+        push_sarg(&sa, "/C");
         break;
     case TOOL_WSTART:
-        push_sarg(&sa, "cmd /C start");
+        push_sarg(&sa, "cmd");
+        push_sarg(&sa, "/C start");
         break;
     }
     while (argc)
