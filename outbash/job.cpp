@@ -24,6 +24,9 @@
 // In will *not* work under Win32 for a number of reasons...
 // (some of them being that WOW64 is full of bugs, others being how this module
 //  is designed to exploit unused bits)
+#ifndef _WIN64
+# error this program must be built for Win64
+#endif
 
 #include <Windows.h>
 
