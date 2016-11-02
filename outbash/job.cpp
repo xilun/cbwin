@@ -424,7 +424,7 @@ private:
 CSuspendedJobImpl::CSuspendedJobImpl(HANDLE hJob)
   : m_job_pid_handles(),
     m_hJob(hJob),
-    m_orig_cpu_rate_control_info{ 0 },
+    m_orig_cpu_rate_control_info{},
     m_cpu_rate_control_applied(false)
 {
     job_cpu_rate_limit();
