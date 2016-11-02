@@ -26,6 +26,7 @@
 #include <string>
 #include <memory>
 
+#include "security.h"
 #include "win_except.h"
 #include "handle.h"
 
