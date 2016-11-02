@@ -23,9 +23,14 @@
 #pragma once
 
 #include <map>
+#include <string>
 
 struct from_system_type { };
 extern const from_system_type from_system;
+
+struct CompareEnvVarName {
+    bool operator()(const std::wstring& a, const std::wstring& b) const;
+};
 
 class EnvVars
 {
@@ -34,6 +39,6 @@ public:
     explicit EnvVars(from_system_type);
     std::wstring get_environment_block() const;
     void set_from_utf8(const char* s);
-
-    std::map<std::wstring, std::wstring> m_env;
+private:
+    std::map<std::wstring, std::wstring, CompareEnvVarName> m_env;
 };

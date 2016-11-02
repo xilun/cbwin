@@ -12,24 +12,24 @@
 
 void DisplayNTError(const char* what, LONG NTStatus)
 {
-    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    HMODULE ntdll = ::GetModuleHandleA("ntdll.dll");
 
     WCHAR *str;
-    DWORD nbWChars = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER
-                                    | FORMAT_MESSAGE_FROM_SYSTEM
-                                    | FORMAT_MESSAGE_FROM_HMODULE
-                                    | FORMAT_MESSAGE_IGNORE_INSERTS,
-                                    ntdll,
-                                    (DWORD)NTStatus,
-                                    0, //MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                                    (LPWSTR)&str,
-                                    0,
-                                    NULL);
+    DWORD nbWChars = ::FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER
+                                      | FORMAT_MESSAGE_FROM_SYSTEM
+                                      | FORMAT_MESSAGE_FROM_HMODULE
+                                      | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                      ntdll,
+                                      (DWORD)NTStatus,
+                                      0, //MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                                      (LPWSTR)&str,
+                                      0,
+                                      NULL);
     if (nbWChars == 0) {
         std::fprintf(stderr, "%s: NT Error Status: 0x%lX\n", what, NTStatus);
     } else {
         std::fprintf(stderr, "%s: 0x%lX: %S\n", what, NTStatus, str);
-        LocalFree(str);
+        ::LocalFree(str);
     }
 }
 
@@ -40,13 +40,13 @@ pNtResumeProcess NtResumeProcess;
 
 int ImportNtDll(void)
 {
-    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    HMODULE ntdll = ::GetModuleHandleA("ntdll.dll");
     if (!ntdll)
         return 0;
 
-    NtSuspendProcess = (pNtSuspendProcess)GetProcAddress(ntdll, "NtSuspendProcess");
+    NtSuspendProcess = (pNtSuspendProcess)::GetProcAddress(ntdll, "NtSuspendProcess");
     if (NtSuspendProcess)
-        NtResumeProcess = (pNtResumeProcess)GetProcAddress(ntdll, "NtResumeProcess");
+        NtResumeProcess = (pNtResumeProcess)::GetProcAddress(ntdll, "NtResumeProcess");
 
     return !!(NtSuspendProcess && NtResumeProcess);
 }

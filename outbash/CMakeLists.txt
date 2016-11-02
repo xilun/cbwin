@@ -7,8 +7,8 @@ add_executable(outbash
                utf.cpp
                env.h
                env.cpp
-               process.h
-               process.cpp
+               redirects.h
+               redirects.cpp
                console.h
                console.cpp
                win_except.h

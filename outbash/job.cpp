@@ -24,6 +24,9 @@
 // In will *not* work under Win32 for a number of reasons...
 // (some of them being that WOW64 is full of bugs, others being how this module
 //  is designed to exploit unused bits)
+#ifndef _WIN64
+# error this program must be built for Win64
+#endif
 
 #include <Windows.h>
 
@@ -424,7 +427,7 @@ private:
 CSuspendedJobImpl::CSuspendedJobImpl(HANDLE hJob)
   : m_job_pid_handles(),
     m_hJob(hJob),
-    m_orig_cpu_rate_control_info{ 0 },
+    m_orig_cpu_rate_control_info{},
     m_cpu_rate_control_applied(false)
 {
     job_cpu_rate_limit();

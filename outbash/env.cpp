@@ -34,6 +34,11 @@ const from_system_type from_system{};
 
 using std::size_t;
 
+bool CompareEnvVarName::operator()(const std::wstring& a, const std::wstring& b) const
+{
+    return CSTR_LESS_THAN == ::CompareStringOrdinal(a.c_str(), (int)a.length(), b.c_str(), (int)b.length(), TRUE);
+}
+
 EnvVars::EnvVars(from_system_type)
 {
     std::unique_ptr<wchar_t, decltype(::FreeEnvironmentStringsW) *> uwinenv(::GetEnvironmentStringsW(), &::FreeEnvironmentStringsW);

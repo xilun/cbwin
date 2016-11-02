@@ -43,14 +43,14 @@ namespace utf
 
 std::string narrow(const wchar_t* s)
 {
-    int res_size = WideCharToMultiByte(CP_UTF8, 0, s, -1, NULL, 0, NULL, NULL);
+    int res_size = ::WideCharToMultiByte(CP_UTF8, 0, s, -1, NULL, 0, NULL, NULL);
     if (res_size <= 0)
         throw conversion_error();
     std::string result(res_size, ' ');
-    int r = WideCharToMultiByte(CP_UTF8, 0,
-                                s, -1,
-                                &result[0], res_size,
-                                NULL, NULL);
+    int r = ::WideCharToMultiByte(CP_UTF8, 0,
+                                  s, -1,
+                                  &result[0], res_size,
+                                  NULL, NULL);
     if (r <= 0)
         throw conversion_error();
     result.resize(r - 1);
@@ -62,10 +62,10 @@ std::string narrow(const std::wstring& s)
     if (s.size() * 3 >= INT_MAX)
         throw conversion_error();
     std::string result(s.size() * 3 + 1, ' ');
-    int r = WideCharToMultiByte(CP_UTF8, 0,
-                                s.c_str(), (int)s.size() + 1,
-                                &result[0], (int)s.size() * 3 + 1,
-                                NULL, NULL);
+    int r = ::WideCharToMultiByte(CP_UTF8, 0,
+                                  s.c_str(), (int)s.size() + 1,
+                                  &result[0], (int)s.size() * 3 + 1,
+                                  NULL, NULL);
     if (r <= 0)
         throw conversion_error();
     result.resize(r - 1);
@@ -74,11 +74,11 @@ std::string narrow(const std::wstring& s)
 
 std::wstring widen(const char* s)
 {
-    int res_size = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
+    int res_size = ::MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
     if (res_size <= 0)
         throw conversion_error();
     std::wstring result(res_size, L' ');
-    int r = MultiByteToWideChar(CP_UTF8, 0, s, -1, &result[0], res_size);
+    int r = ::MultiByteToWideChar(CP_UTF8, 0, s, -1, &result[0], res_size);
     if (r <= 0)
         throw conversion_error();
     result.resize(r - 1);
@@ -90,7 +90,7 @@ std::wstring widen(const std::string& s)
     if (s.size() >= INT_MAX)
         throw conversion_error();
     std::wstring result(s.size() + 1, L' ');
-    int r = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size() + 1, &result[0], (int)s.size() + 1);
+    int r = ::MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size() + 1, &result[0], (int)s.size() + 1);
     if (r <= 0)
         throw conversion_error();
     result.resize(r - 1);
