@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8.11)
+cmake_minimum_required(VERSION 3.6)
 
 project(cbwin)
 
@@ -52,8 +52,8 @@ if(MSVC)
             string(REGEX REPLACE "/MD" "/MT" ${variable} "${${variable}}")
         endif()
         # remove NDEBUG to keep assertions:
-        if(${variable} MATCHES "/D NDEBUG")
-            string(REGEX REPLACE "/D NDEBUG" "" ${variable} "${${variable}}")
+        if(${variable} MATCHES "/DNDEBUG")
+            string(REGEX REPLACE "/DNDEBUG" "" ${variable} "${${variable}}")
         endif()
     endforeach()
 
