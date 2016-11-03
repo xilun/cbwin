@@ -33,7 +33,7 @@ if(MSVC)
     else()
         # Wall is basically unusable as is with MSVC, because it needlessly chokes
         # on crt and system headers.
-        set_target_properties(outbash PROPERTIES COMPILE_FLAGS "/W4 /D_CRT_SECURE_NO_WARNINGS")
+        set_target_properties(outbash PROPERTIES COMPILE_FLAGS "/W4 /D_CRT_SECURE_NO_WARNINGS /MP")
     endif()
 
     set(variables
