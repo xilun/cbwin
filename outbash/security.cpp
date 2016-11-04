@@ -34,23 +34,23 @@
 namespace {
 
 
-static PSID psid_from_token_info_ptr(TOKEN_USER* token_user)
+PSID psid_from_token_info_ptr(TOKEN_USER* token_user)
 {
     return token_user->User.Sid;
 }
 
-static PSID psid_from_token_info_ptr(TOKEN_PRIMARY_GROUP* token_primary_group)
+PSID psid_from_token_info_ptr(TOKEN_PRIMARY_GROUP* token_primary_group)
 {
     return token_primary_group->PrimaryGroup;
 }
 
-static PSID psid_from_token_info_ptr(TOKEN_MANDATORY_LABEL* token_mandatory_label)
+PSID psid_from_token_info_ptr(TOKEN_MANDATORY_LABEL* token_mandatory_label)
 {
     return token_mandatory_label->Label.Sid;
 }
 
 template <typename TTokenType, TOKEN_INFORMATION_CLASS TTokenInfoClass>
-static std::string sid_from_token_info(HANDLE hToken)
+std::string sid_from_token_info(HANDLE hToken)
 {
     std::unique_ptr<TTokenType, decltype(std::free) *> pTokenInfo{ nullptr, &std::free };
     DWORD length;
@@ -69,7 +69,7 @@ static std::string sid_from_token_info(HANDLE hToken)
     return std::unique_ptr<char, decltype(::LocalFree) *>{ cstr_sid, &::LocalFree }.get();
 }
 
-static CUniqueHandle get_current_process_token()
+CUniqueHandle get_current_process_token()
 {
     HANDLE hToken;
     if (!::OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken))
@@ -77,7 +77,7 @@ static CUniqueHandle get_current_process_token()
     return CUniqueHandle(hToken);
 }
 
-static std::string sddl_allow_user_with_integrity()
+std::string sddl_allow_user_with_integrity()
 {
     CUniqueHandle token = get_current_process_token();
     std::string user_sid = sid_from_token_info<TOKEN_USER, TokenUser>(token.get_checked());
@@ -97,7 +97,7 @@ public:
     explicit CUniqueSecDesc(PSECURITY_DESCRIPTOR pSecDesc) : TUniqueSecDescBase((SECURITY_DESCRIPTOR*)pSecDesc, &::LocalFree) { }
 };
 
-static PSECURITY_DESCRIPTOR create_user_only_sd()
+PSECURITY_DESCRIPTOR create_user_only_sd()
 {
     std::string sddl = sddl_allow_user_with_integrity();
     //printf("SDDL: %s\n", sddl.c_str());
@@ -110,7 +110,7 @@ static PSECURITY_DESCRIPTOR create_user_only_sd()
     return pRawSecDesc;
 }
 
-static CUniqueSecDesc g_user_sd(create_user_only_sd());
+CUniqueSecDesc g_user_sd(create_user_only_sd());
 
 //<rant>
 // As you are reading this, I would like to take the opportunity to tell you that AccessCheck() and its
@@ -125,7 +125,6 @@ static CUniqueSecDesc g_user_sd(create_user_only_sd());
 //</rant>
 
 // if you don't care about PrivilegeSet but don't want to risk to randomly fail:
-static
 BOOL access_check_simpler(_In_   PSECURITY_DESCRIPTOR  pSecurityDescriptor,
                           _In_   HANDLE                ClientToken,
                           _In_   DWORD                 DesiredAccess,
@@ -157,7 +156,7 @@ BOOL access_check_simpler(_In_   PSECURITY_DESCRIPTOR  pSecurityDescriptor,
     return result;
 }
 
-static GENERIC_MAPPING StdGenericMapping = {
+GENERIC_MAPPING StdGenericMapping = {
     STANDARD_RIGHTS_READ,
     STANDARD_RIGHTS_WRITE,
     STANDARD_RIGHTS_EXECUTE,
