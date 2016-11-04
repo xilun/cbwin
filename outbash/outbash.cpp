@@ -762,8 +762,8 @@ private:
 
                 if (redir.get()) {
                     CUniqueHandle ctrl_close_ev = m_usock.create_manual_event(FD_CLOSE);
-                    redir.get()->initiate_connections(caller_addr.sin_addr.s_addr);
-                    redir.get()->complete_connections(ctrl_close_ev);
+                    redir->initiate_connections(caller_addr.sin_addr.s_addr);
+                    redir->complete_connections(ctrl_close_ev);
                     ctrl_close_ev.close();
                     m_usock.set_to_blocking();
                 }
@@ -911,7 +911,7 @@ private:
             job_handle.close();
 
             if (redir.get())
-                redir.get()->close();
+                redir->close();
 
             ctrl_ev.close();
 
