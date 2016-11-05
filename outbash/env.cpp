@@ -64,6 +64,15 @@ std::wstring EnvVars::get_environment_block() const
     return result;
 }
 
+std::wstring EnvVars::get(const wchar_t* name) const
+{
+    auto it = m_env.find(name);
+    if (it != m_env.end())
+        return it->second;
+    else
+        return L"";
+}
+
 void EnvVars::set_from_utf8(const char* s)
 {
     std::wstring ws = utf::widen(s);

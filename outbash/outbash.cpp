@@ -54,7 +54,39 @@ using std::size_t;
 using std::uint16_t;
 using std::uint32_t;
 
-static const EnvVars initial_env_vars{ from_system };
+class Env {
+    static std::wstring get_system_directory()
+    {
+        wchar_t buf[MAX_PATH];
+        UINT res = ::GetSystemDirectoryW(buf, MAX_PATH);
+        if (res == 0 || res >= MAX_PATH) { std::fprintf(stderr, "outbash: GetSystemDirectory error\n"); std::abort(); }
+        return buf;
+    }
+    std::wstring get_comspec()
+    {
+        std::wstring result = initial_vars.get(L"ComSpec");
+        if (!result.empty())
+            return result;
+        else
+            return system_directory + L"\\cmd.exe";
+    }
+public:
+    Env() :
+        initial_vars{ from_system },
+        system_directory{ get_system_directory() },
+        comspec{ get_comspec() },
+        userprofile{ initial_vars.get(L"USERPROFILE") }
+    {
+        if (userprofile.empty())
+            std::fprintf(stderr, "outbash: warning: USERPROFILE environment variable not found\n");
+    }
+// attributes:
+    EnvVars initial_vars;
+    std::wstring system_directory;
+    std::wstring comspec;
+    std::wstring userprofile;
+};
+static const Env env{};
 
 template <typename CharT>
 static bool is_ascii_letter(CharT c)
@@ -215,10 +247,7 @@ private:
 
     static std::wstring get_default_bash_launcher()
     {
-        wchar_t buf[MAX_PATH];
-        UINT res = ::GetSystemDirectoryW(buf, MAX_PATH);
-        if (res == 0 || res >= MAX_PATH) { std::fprintf(stderr, "outbash: GetSystemDirectory error\n"); std::abort(); }
-        return buf + std::wstring(L"\\bash.exe");
+        return env.system_directory + L"\\bash.exe";
     }
 
 private:
@@ -227,35 +256,6 @@ private:
     bool            m_has_bash_exe_tilde;
     bool            m_is_session;
 };
-
-static std::wstring get_comspec()
-{
-    wchar_t buf[MAX_PATH];
-    UINT res = ::GetEnvironmentVariableW(L"ComSpec", buf, MAX_PATH);
-    if (res == 0 && ::GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
-        res = ::GetSystemDirectoryW(buf, MAX_PATH);
-        if (res == 0 || res >= MAX_PATH) { std::fprintf(stderr, "outbash: GetSystemDirectory error\n"); std::abort(); }
-        return buf + std::wstring(L"\\cmd.exe");
-    } else {
-        if (res == 0 || res >= MAX_PATH) { std::fprintf(stderr, "outbash: GetEnvironmentVariable ComSpec error\n"); std::abort(); }
-        return buf;
-    }
-}
-static const std::wstring comspec = get_comspec();
-
-static std::wstring get_userprofile()
-{
-    wchar_t buf[MAX_PATH];
-    UINT res = ::GetEnvironmentVariableW(L"USERPROFILE", buf, MAX_PATH);
-    if (res == 0 && ::GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
-        std::fprintf(stderr, "outbash: warning: USERPROFILE environment variable not found\n");
-        return L"";
-    } else {
-        if (res == 0 || res >= MAX_PATH) { std::fprintf(stderr, "outbash: GetEnvironmentVariable USERPROFILE error\n"); std::abort(); }
-        return buf;
-    }
-}
-static const std::wstring userprofile = get_userprofile();
 
 int wstr_case_ascii_ncmp(const wchar_t* s1, const wchar_t* s2, size_t n)
 {
@@ -300,11 +300,11 @@ static int start_command(const wchar_t* module,
     const wchar_t* wdir = nullptr;
     if (dir != nullptr && *dir != L'\0') {
         if (dir[0] == L'~' && dir[1] == L'\0') {
-            if (userprofile.empty()) {
+            if (env.userprofile.empty()) {
                 std::fprintf(stderr, "outbash: start_command: %%USERPROFILE%% required but not found\n");
                 return 1;
             }
-            wdir = userprofile.c_str();
+            wdir = env.userprofile.c_str();
         } else if (!path_is_really_absolute(dir)) { // CreateProcess will happily use a relative, but we don't want to
             std::fprintf(stderr, "outbash: start_command: non-absolute directory parameter: %S\n", dir);
             return 1;
@@ -315,16 +315,16 @@ static int start_command(const wchar_t* module,
     const wchar_t* wmodule = nullptr;
     if (module == nullptr || module[0] == L'\0') {
         if (wstr_case_ascii_ncmp(cmdline.c_str(), L"cmd", 3) == 0 && (is_cmd_line_sep(cmdline[3]) || cmdline[3] == L'\0'))
-            wmodule = comspec.c_str();
+            wmodule = env.comspec.c_str();
     } else {
         wmodule = module;
     }
 
-    const wchar_t* env = nullptr;
+    const wchar_t* env_block = nullptr;
     std::wstring wbuf;
     if (vars) {
         wbuf = vars->get_environment_block();
-        env = &wbuf[0];
+        env_block = &wbuf[0];
     }
 
     AttributeHandleList ahl;
@@ -340,7 +340,7 @@ static int start_command(const wchar_t* module,
     }
     if (!::CreateProcessW(wmodule, &cmdline[0], NULL, NULL, inherit_handles,
                           CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | creation_flags,
-                          (LPVOID)env, wdir, (STARTUPINFOW*)&si, &out_pi)) {
+                          (LPVOID)env_block, wdir, (STARTUPINFOW*)&si, &out_pi)) {
         Win32_perror("outbash: CreateProcess");
         std::fprintf(stderr, "outbash: CreateProcess failed (%lu) for module %c%S%c command: %S\n",
                      ::GetLastError(),
@@ -717,7 +717,7 @@ private:
                 std::wstring wrun;
                 std::wstring wcd;
                 std::unique_ptr<EnvVars> vars(nullptr);
-                auto vars_cp = [&] { if (!vars) vars.reset(new EnvVars(initial_env_vars)); return vars.get(); };
+                auto vars_cp = [&] { if (!vars) vars.reset(new EnvVars(env.initial_vars)); return vars.get(); };
                 auto inst_redir = [&] { if (!redir) redir.reset(new OutbashStdRedirects); return redir.get(); };
                 bool silent_breakaway = false;
 
