@@ -65,25 +65,25 @@ enum // values must not change
     JPH_HOpenFailed = 1,    // for another reason than simply if the process died
 };
 
-static bool is_real_handle(HANDLE h)
+bool is_real_handle(HANDLE h)
 {
     return    ((ULONG_PTR)h & ~(ULONG_PTR)JPH_Tag_Mask)
            && (((ULONG_PTR)h & (ULONG_PTR)JPH_Tag_Mask) != JPH_Tag_Skip_Idx);
 }
 
 // precondition: is_real_handle(h)
-static bool suspend_has_been_attempted(HANDLE h)
+bool suspend_has_been_attempted(HANDLE h)
 {
     return    (((ULONG_PTR)h & JPH_Tag_Mask) == JPH_Tag_Suspended)
            || (((ULONG_PTR)h & JPH_Tag_Mask) == JPH_Tag_Suspend_Failed);
 }
 
-static HANDLE tag_handle(HANDLE h, DWORD tag)
+HANDLE tag_handle(HANDLE h, DWORD tag)
 {
     return (HANDLE)(((ULONG_PTR)h & ~(ULONG_PTR)JPH_Tag_Mask) | tag);
 }
 
-static HANDLE untag_handle(HANDLE h)
+HANDLE untag_handle(HANDLE h)
 {
     return (HANDLE)((ULONG_PTR)h & ~(ULONG_PTR)JPH_Tag_Mask);
 }
@@ -93,7 +93,6 @@ static HANDLE untag_handle(HANDLE h)
  * Attempt to get the skip value of an entry.
  * If the entry does not exist or is not a skip entry, returns 0.
  */
-static
 SSIZE_T Get_Skip_Value(PJOBOBJECT_BASIC_PROCESS_ID_LIST pid_list, SSIZE_T idx)
 {
     if (idx < 0 || idx >= (SSIZE_T)pid_list->NumberOfProcessIdsInList)
@@ -104,14 +103,14 @@ SSIZE_T Get_Skip_Value(PJOBOBJECT_BASIC_PROCESS_ID_LIST pid_list, SSIZE_T idx)
     return (SSIZE_T)(msd >> 2);
 }
 
-static HANDLE cast_msd_to_HANDLE(DWORD msd)
+HANDLE cast_msd_to_HANDLE(DWORD msd)
 {
 // (HANDLE)msd would yield: C4312: conversion from 'DWORD' to 'HANDLE' of greater size
 // Here this is OK because 'msd' stores a (tagged) NT handle, which fits in 32-bits even on Win64.
     return (HANDLE)(DWORD_PTR)msd;
 }
 
-static ULONG_PTR cast_HANDLE_to_msd(HANDLE hdl)
+ULONG_PTR cast_HANDLE_to_msd(HANDLE hdl)
 {
     if (hdl == NULL || hdl == INVALID_HANDLE_VALUE)
         return 0;
@@ -255,7 +254,7 @@ CJobPidHandles::CJobPidHandles(HANDLE hJob)
     }
 }
 
-static EActivity max_activity(EActivity a, EActivity b)
+EActivity max_activity(EActivity a, EActivity b)
 {
     return static_cast<EActivity>(std::max(static_cast<int>(a), static_cast<int>(b)));
 }

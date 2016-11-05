@@ -128,7 +128,7 @@ Other example to launch `msbuild` to rebuild `outbash.exe`, which shows that
 return codes are propagated (running from another copy of `outbash.exe`, its
 impossible to overwrite it when in use):
 
-    xilun@WINWIN:/mnt/c/Users/xilun/Documents/Projects/cbwin/vs$ wcmd '"C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" amd64 && msbuild /t:Rebuild /p:Configuration=Release /m cbwin.sln'
+    xilun@WINWIN:/mnt/c/Users/xilun/Documents/Projects/cbwin/vs$ wcmd '"C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" amd64 && msbuild /t:Rebuild /p:Configuration=Release cbwin.sln'
     Microsoft (R) Build Engine, version 14.0.25123.0
     Copyright (C) Microsoft Corporation. Tous droits réservés.
     
@@ -143,7 +143,7 @@ impossible to overwrite it when in use):
     Temps écoulé 00:00:04.61
     xilun@WINWIN:/mnt/c/Users/xilun/Documents/Projects/cbwin/vs$ echo $?
     0
-    xilun@WINWIN:/mnt/c/Users/xilun/Documents/Projects/cbwin/vs$ wcmd '"C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" amd64 && msbuild /t:Rebuild /p:Configuration=Release /m does_not_exist.sln'
+    xilun@WINWIN:/mnt/c/Users/xilun/Documents/Projects/cbwin/vs$ wcmd '"C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" amd64 && msbuild /t:Rebuild /p:Configuration=Release does_not_exist.sln'
     Microsoft (R) Build Engine, version 14.0.25123.0
     Copyright (C) Microsoft Corporation. Tous droits réservés.
     

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8.11)
+cmake_minimum_required(VERSION 3.6)
 
 project(cbwin)
 
@@ -35,7 +35,7 @@ if(MSVC)
     else()
         # Wall is basically unusable as is with MSVC, because it needlessly chokes
         # on crt and system headers.
-        set_target_properties(outbash PROPERTIES COMPILE_FLAGS "/W4 /D_CRT_SECURE_NO_WARNINGS")
+        set_target_properties(outbash PROPERTIES COMPILE_FLAGS "/W4 /D_CRT_SECURE_NO_WARNINGS /MP")
     endif()
 
     set(variables
@@ -54,8 +54,8 @@ if(MSVC)
             string(REGEX REPLACE "/MD" "/MT" ${variable} "${${variable}}")
         endif()
         # remove NDEBUG to keep assertions:
-        if(${variable} MATCHES "/D NDEBUG")
-            string(REGEX REPLACE "/D NDEBUG" "" ${variable} "${${variable}}")
+        if(${variable} MATCHES "/DNDEBUG")
+            string(REGEX REPLACE "/DNDEBUG" "" ${variable} "${${variable}}")
         endif()
     endforeach()
 

@@ -39,6 +39,9 @@ public:
     explicit EnvVars(from_system_type);
     std::wstring get_environment_block() const;
     void set_from_utf8(const char* s);
+    // get(name) returns the value of the corresponding environment variable,
+    // or an empty string if not found
+    std::wstring get(const wchar_t* name) const;
 private:
     std::map<std::wstring, std::wstring, CompareEnvVarName> m_env;
 };

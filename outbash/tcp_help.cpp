@@ -20,8 +20,8 @@
  * SOFTWARE.
  */
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include <WinSock2.h>
+#include <WS2tcpip.h>
 #include <iphlpapi.h>
 #include <Windows.h>
 
@@ -100,7 +100,7 @@ private:
 };
 
 
-static bool tcp_caller_state_up(DWORD dwState)
+bool tcp_caller_state_up(DWORD dwState)
 {
     return dwState == MIB_TCP_STATE_ESTAB
         || dwState == MIB_TCP_STATE_FIN_WAIT1   // the caller can half-close its own end of the socket
@@ -108,7 +108,7 @@ static bool tcp_caller_state_up(DWORD dwState)
 }
 
 
-static DWORD Get_Peer_Pid_From_Tcp_Loopback_Ports(int local_port, int peer_port)
+DWORD Get_Peer_Pid_From_Tcp_Loopback_Ports(int local_port, int peer_port)
 {
     const DWORD nl_loopback = htonl(INADDR_LOOPBACK);
     const DWORD ns_peer_port = htons((u_short)peer_port);
