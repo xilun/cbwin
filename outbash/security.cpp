@@ -110,7 +110,7 @@ PSECURITY_DESCRIPTOR create_user_only_sd()
     return pRawSecDesc;
 }
 
-CUniqueSecDesc g_user_sd(create_user_only_sd());
+const CUniqueSecDesc g_user_sd{ create_user_only_sd() };
 
 //<rant>
 // As you are reading this, I would like to take the opportunity to tell you that AccessCheck() and its
