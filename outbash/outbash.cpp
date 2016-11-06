@@ -54,47 +54,6 @@ using std::size_t;
 using std::uint16_t;
 using std::uint32_t;
 
-class Env {
-    static std::wstring get_windows_directory()
-    {
-        wchar_t buf[MAX_PATH];
-        UINT res = ::GetWindowsDirectoryW(buf, MAX_PATH);
-        if (res == 0 || res >= MAX_PATH) { std::fprintf(stderr, "outbash: GetWindowsDirectory error\n"); std::abort(); }
-        return buf;
-    }
-    static std::wstring get_system_directory()
-    {
-        wchar_t buf[MAX_PATH];
-        UINT res = ::GetSystemDirectoryW(buf, MAX_PATH);
-        if (res == 0 || res >= MAX_PATH) { std::fprintf(stderr, "outbash: GetSystemDirectory error\n"); std::abort(); }
-        return buf;
-    }
-    std::wstring get_comspec()
-    {
-        std::wstring result = initial_vars.get(L"ComSpec");
-        if (!result.empty())
-            return result;
-        else
-            return system_directory + L"\\cmd.exe";
-    }
-public:
-    Env() :
-        initial_vars{ from_system },
-        windows_directory{ get_windows_directory() },
-        system_directory{ get_system_directory() },
-        comspec{ get_comspec() },
-        userprofile{ initial_vars.get(L"USERPROFILE") }
-    {
-        if (userprofile.empty())
-            std::fprintf(stderr, "outbash: warning: USERPROFILE environment variable not found\n");
-    }
-// attributes:
-    EnvVars initial_vars;
-    std::wstring windows_directory;
-    std::wstring system_directory;
-    std::wstring comspec;
-    std::wstring userprofile;
-};
 static const Env env{};
 
 template <typename CharT>

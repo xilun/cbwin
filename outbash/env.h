@@ -45,3 +45,18 @@ public:
 private:
     std::map<std::wstring, std::wstring, CompareEnvVarName> m_env;
 };
+
+class Env {
+    std::wstring get_comspec() const;
+    std::wstring get_module_windows_path() const;
+public:
+    Env();
+// attributes:
+    EnvVars initial_vars;
+    std::wstring windows_directory;
+    std::wstring system_directory;
+    std::wstring comspec;
+    std::wstring userprofile;
+    std::wstring module_directory;
+    std::wstring module_windows_path;
+};
