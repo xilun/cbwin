@@ -23,6 +23,7 @@
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 #include <Windows.h>
+#include <PathCch.h>
 
 #include <memory>
 #include <thread>
@@ -36,6 +37,7 @@
 #include <cstring>
 #include <cstdint>
 #include <clocale>
+#include <cwchar>
 #include <mbctype.h>
 
 #include "utf.h"
@@ -49,6 +51,7 @@
 #include "security.h"
 
 #pragma comment(lib, "Ws2_32.lib")
+#pragma comment(lib, "PathCch.lib")
 
 using std::size_t;
 using std::uint16_t;
@@ -242,13 +245,32 @@ int wstr_case_ascii_ncmp(const wchar_t* s1, const wchar_t* s2, size_t n)
 
 // PathIsRelative is, ahem, ... interesting? (like a lot of Win32 stuff, actually)
 // So we implement our own (hopefully) non crazy check:
+// XXX I'm not sure I should deal with UNC?
+// XXX and do I really want to consider 'starts with \' as absolute?
 static bool path_is_really_absolute(const wchar_t* path)
 {
-    if (*path == L'\\')
+    if (std::wcsncmp(path, L"\\\\?\\", 4) == 0)
+        path += 4;
+    else if (*path == L'\\' && path[1] != L'\\')
         return true;
+
     if (is_ascii_letter(path[0]) && path[1] == L':' && path[2] == L'\\')
         return true;
     return false;
+}
+
+static std::wstring path_canonicalize_if_absolute(const wchar_t* path)
+{
+    if (!path_is_really_absolute(path))
+        return path;
+
+    PWSTR rawCanon = NULL;
+    HRESULT res = ::PathAllocCanonicalize(path, PATHCCH_ALLOW_LONG_PATHS, &rawCanon);
+
+    if (res != S_OK)
+        throw_system_error("PathAllocCanonicalize", res);
+
+    return std::unique_ptr<wchar_t, decltype(::LocalFree) *>{ rawCanon, &::LocalFree }.get();
 }
 
 static int start_command(const wchar_t* module,
@@ -762,6 +784,7 @@ private:
                 if (!::SetInformationJobObject(job_handle.get_unchecked(), JobObjectExtendedLimitInformation, &job_limit_infos, sizeof(job_limit_infos)))
                     throw_last_error("SetInformationJobObject");
 
+                wmodule = path_canonicalize_if_absolute(wmodule.c_str());
                 if (start_command(wmodule.c_str(), wrun, wcd.c_str(), vars.get(), redir.get(), CREATE_SUSPENDED, pi) != 0)
                     return;
 
