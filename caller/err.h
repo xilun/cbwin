@@ -20,21 +20,10 @@
  * SOFTWARE.
  */
 
-#ifndef WRUN_COMMON_H
-#define WRUN_COMMON_H
+#ifndef WRUN_ERR_H
+#define WRUN_ERR_H
 
-#include <stdlib.h>
+void output_err(const char* s);
+void terminate_nocore(void)                 __attribute__((noreturn));
 
-inline const char* shift(int *pargc, char ***pargv)
-{
-    if (*pargc) {
-        const char *shifted = **pargv;
-        (*pargc)--;
-        (*pargv)++;
-        return shifted;
-    } else {
-        abort();
-    }
-}
-
-#endif // WRUN_COMMON_H
+#endif // WRUN_ERR_H

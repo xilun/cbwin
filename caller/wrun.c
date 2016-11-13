@@ -41,6 +41,8 @@
 #include <pwd.h>
 
 #include "common.h"
+#include "xalloc.h"
+#include "err.h"
 
 #define MY_DYNAMIC_PATH_MAX (32768*3 + 32)
 #define MNT_DRIVE_FS_PREFIX "/mnt/"

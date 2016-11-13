@@ -20,21 +20,16 @@
  * SOFTWARE.
  */
 
-#ifndef WRUN_COMMON_H
-#define WRUN_COMMON_H
+#ifndef WRUN_XALLOC_H
+#define WRUN_XALLOC_H
 
-#include <stdlib.h>
+#include <stddef.h>
 
-inline const char* shift(int *pargc, char ***pargv)
-{
-    if (*pargc) {
-        const char *shifted = **pargv;
-        (*pargc)--;
-        (*pargv)++;
-        return shifted;
-    } else {
-        abort();
-    }
-}
+#define attributes_malloc __attribute__((malloc)) __attribute__((warn_unused_result))
 
-#endif // WRUN_COMMON_H
+void* xmalloc(size_t sz)                    attributes_malloc;
+void* xcalloc(size_t nmemb, size_t size)    attributes_malloc;
+void* xrealloc(void *ptr, size_t sz)        __attribute__((warn_unused_result));
+char* xstrdup(const char* s)                attributes_malloc;
+
+#endif // WRUN_XALLOC_H
