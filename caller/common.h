@@ -23,12 +23,16 @@
 #ifndef WRUN_COMMON_H
 #define WRUN_COMMON_H
 
+#include <stddef.h>
+
+#define attributes_malloc __attribute__((malloc)) __attribute__((warn_unused_result))
+
 void output_err(const char* s);
-void terminate_nocore() __attribute__ ((noreturn));
-void* xmalloc(size_t sz);
-void* xcalloc(size_t nmemb, size_t size);
-void* xrealloc(void *ptr, size_t sz);
-char* xstrdup(const char* s);
+void terminate_nocore(void)                 __attribute__((noreturn));
+void* xmalloc(size_t sz)                    attributes_malloc;
+void* xcalloc(size_t nmemb, size_t size)    attributes_malloc;
+void* xrealloc(void *ptr, size_t sz)        __attribute__((warn_unused_result));
+char* xstrdup(const char* s)                attributes_malloc;
 const char* shift(int *pargc, char ***pargv);
 
 #endif // WRUN_COMMON_H

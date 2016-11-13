@@ -23,6 +23,8 @@
 #define _XOPEN_SOURCE 700
 #define _BSD_SOURCE
 
+#include "common.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
