@@ -43,6 +43,7 @@
 #include "common.h"
 #include "xalloc.h"
 #include "err.h"
+#include "str.h"
 
 #define MY_DYNAMIC_PATH_MAX (32768*3 + 32)
 #define MNT_DRIVE_FS_PREFIX "/mnt/"
@@ -139,56 +140,6 @@ static char* convert_slash_to_backslash(const char* path)
             result[i] = '\\';
     }
     return result;
-}
-
-struct string {
-    size_t length;
-    size_t capacity;
-    char* str;
-};
-
-static struct string string_create(const char* init)
-{
-    struct string result;
-    result.length = strlen(init);
-    result.capacity = result.length;
-    result.str = xmalloc(result.capacity + 1);
-    memcpy(result.str, init, result.length + 1);
-    return result;
-}
-
-static void string_reserve(struct string* s, size_t new_capacity)
-{
-    if (new_capacity > s->capacity) {
-        s->capacity = new_capacity;
-        s->str = xrealloc(s->str, s->capacity + 1);
-    }
-}
-
-static void string_exp_grow(struct string* s, size_t append_length)
-{
-    if (s->length + append_length > s->capacity) {
-        size_t new_capa = s->length + append_length;
-        if (new_capa < s->capacity * 2 + 1)
-            new_capa = s->capacity * 2 + 1;
-        string_reserve(s, new_capa);
-    }
-}
-
-static void string_append(struct string* restrict s, const char* restrict rhs)
-{
-    size_t rhs_len = strlen(rhs);
-    string_exp_grow(s, rhs_len);
-    memcpy(&s->str[s->length], rhs, rhs_len + 1);
-    s->length += rhs_len;
-}
-
-static void string_destroy(struct string* s)
-{
-    free(s->str);
-    s->str = NULL;
-    s->capacity = 0;
-    s->length = 0;
 }
 
 static void check_argc(int argc)
