@@ -25,7 +25,7 @@
 
 #include <stdlib.h>
 
-inline const char* shift(int *pargc, char ***pargv)
+static inline const char* shift(int *pargc, char ***pargv)
 {
     if (*pargc) {
         const char *shifted = **pargv;
