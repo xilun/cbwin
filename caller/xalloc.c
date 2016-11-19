@@ -32,6 +32,8 @@
 
 void* xmalloc(size_t sz)
 {
+    if (sz == 0) sz = 1;
+
     void* result = malloc(sz);
     if (result == NULL) {
         output_err("malloc failed\n");
@@ -42,6 +44,8 @@ void* xmalloc(size_t sz)
 
 void* xrealloc(void *ptr, size_t sz)
 {
+    if (sz == 0) sz = 1;
+
     void* result = realloc(ptr, sz);
     if (result == NULL) {
         output_err("realloc failed\n");
@@ -62,6 +66,11 @@ char* xstrdup(const char* s)
 
 void* xcalloc(size_t nmemb, size_t size)
 {
+    if (nmemb == 0 || size == 0) {
+        nmemb = 1;
+        size = 1;
+    }
+
     void* result = calloc(nmemb, size);
     if (result == NULL) {
         output_err("calloc failed\n");
