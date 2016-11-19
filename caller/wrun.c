@@ -1072,7 +1072,7 @@ int main(int argc, char *argv[])
     // in this case
     if (active_threads[0]) {
         __sync_fetch_and_add(&fs[0].ask_terminate, 1);
-        useconds_t usec_sleep = 20000;
+        useconds_t usec_sleep = 1000;
         while (!__sync_fetch_and_add(&fs[0].finished, 0)) {
             pthread_kill(forward_threads[0], SIGUSR1);
             usleep(usec_sleep);
