@@ -20,9 +20,6 @@
  * SOFTWARE.
  */
 
-#define _XOPEN_SOURCE 700
-#define _BSD_SOURCE
-
 #include "xalloc.h"
 
 #include <stdlib.h>
