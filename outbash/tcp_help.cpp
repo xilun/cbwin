@@ -35,9 +35,6 @@
 #pragma comment(lib, "ws2_32.lib")
 
 
-namespace {
-
-
 #define MY_SIZEOF_TCPTABLE_OWNER_PID(X) ( FIELD_OFFSET(MIB_TCPTABLE_OWNER_PID, table[0])    \
                                           + ((X) * sizeof(MIB_TCPROW_OWNER_PID)) + 8 )
 
@@ -45,6 +42,10 @@ namespace {
     ( ( ((bytes) + sizeof(MIB_TCPROW_OWNER_PID) - 9 - FIELD_OFFSET(MIB_TCPTABLE_OWNER_PID, table[0]))   \
         / sizeof(MIB_TCPROW_OWNER_PID) * sizeof(MIB_TCPROW_OWNER_PID) )                                 \
       + FIELD_OFFSET(MIB_TCPTABLE_OWNER_PID, table[0]) + 8 )
+
+
+namespace {
+
 
 class CTcpPidTable {
     // GetExtendedTcpTable() sometimes fails for unknown reasons and returns 0xc0000001
@@ -78,8 +79,8 @@ public:
             }
         } while (result != NO_ERROR);
     }
-    CTcpPidTable(CTcpPidTable&& other) : m_table(other.m_table) { other.m_table = nullptr; }
-    CTcpPidTable& operator=(CTcpPidTable&& other)
+    CTcpPidTable(CTcpPidTable&& other) noexcept : m_table(other.m_table) { other.m_table = nullptr; }
+    CTcpPidTable& operator=(CTcpPidTable&& other) noexcept
     {
         if (this != &other) {
             std::free(m_table);

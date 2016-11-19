@@ -40,7 +40,7 @@ bool CompareEnvVarName::operator()(const std::wstring& a, const std::wstring& b)
     return CSTR_LESS_THAN == ::CompareStringOrdinal(a.c_str(), (int)a.length(), b.c_str(), (int)b.length(), TRUE);
 }
 
-EnvVars::EnvVars(from_system_type)
+EnvVars::EnvVars(from_system_type /*unused*/)
 {
     std::unique_ptr<wchar_t, decltype(::FreeEnvironmentStringsW) *> uwinenv(::GetEnvironmentStringsW(), &::FreeEnvironmentStringsW);
 
@@ -131,7 +131,7 @@ std::wstring get_directory(std::wstring filename)
     return filename;
 }
 
-} // namespace -- anonymous
+} // namespace
 
 std::wstring Env::get_comspec() const
 {
