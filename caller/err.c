@@ -20,43 +20,38 @@
  * SOFTWARE.
  */
 
-#pragma once
+#define _XOPEN_SOURCE 700
+#define _BSD_SOURCE
 
-#include <map>
-#include <string>
+#include "err.h"
 
-struct from_system_type { };
-extern const from_system_type from_system;
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#include <unistd.h>
+#include <signal.h>
 
-struct CompareEnvVarName {
-    bool operator()(const std::wstring& a, const std::wstring& b) const;
-};
-
-class EnvVars
+void output_err(const char* s)
 {
-public:
-    EnvVars() {}
-    explicit EnvVars(from_system_type);
-    std::wstring get_environment_block() const;
-    void set_from_utf8(const char* s);
-    // get(name) returns the value of the corresponding environment variable,
-    // or an empty string if not found
-    std::wstring get(const wchar_t* name) const;
-private:
-    std::map<std::wstring, std::wstring, CompareEnvVarName> m_env;
-};
+    ssize_t len = (ssize_t)strlen(s);
+    ssize_t where = 0;
+    while (len - where > 0) {
+        ssize_t res = write(STDERR_FILENO, s + where, len - where);
+        if (res < 0) {
+            if (errno != EINTR)
+                return;
+        } else {
+            where += res;
+        }
+    }
+}
 
-class Env {
-    std::wstring get_comspec() const;
-    std::wstring get_module_windows_path() const;
-public:
-    Env();
-// attributes:
-    EnvVars initial_vars;
-    std::wstring windows_directory;
-    std::wstring system_directory;
-    std::wstring comspec;
-    std::wstring userprofile;
-    std::wstring module_directory;
-    std::wstring module_windows_path;
-};
+void terminate_nocore()
+{
+    // we use SIGKILL because it's reliable, does not dump core, and Windows
+    // does not have it, so if we ever get crazy enough to propagate
+    // termination by signal, the caller will still be able to distinguish
+    // between local and Win32 failures.
+    kill(getpid(), SIGKILL);
+    abort(); // fallback, should not happen
+}

@@ -23,12 +23,18 @@
 #ifndef WRUN_COMMON_H
 #define WRUN_COMMON_H
 
-void output_err(const char* s);
-void terminate_nocore() __attribute__ ((noreturn));
-void* xmalloc(size_t sz);
-void* xcalloc(size_t nmemb, size_t size);
-void* xrealloc(void *ptr, size_t sz);
-char* xstrdup(const char* s);
-const char* shift(int *pargc, char ***pargv);
+#include <stdlib.h>
+
+static inline const char* shift(int *pargc, char ***pargv)
+{
+    if (*pargc) {
+        const char *shifted = **pargv;
+        (*pargc)--;
+        (*pargv)++;
+        return shifted;
+    } else {
+        abort();
+    }
+}
 
 #endif // WRUN_COMMON_H

@@ -20,43 +20,19 @@
  * SOFTWARE.
  */
 
-#pragma once
+#ifndef WRUN_STR_H
+#define WRUN_STR_H
 
-#include <map>
-#include <string>
+#include <stddef.h>
 
-struct from_system_type { };
-extern const from_system_type from_system;
-
-struct CompareEnvVarName {
-    bool operator()(const std::wstring& a, const std::wstring& b) const;
+struct string {
+    size_t length;
+    size_t capacity;
+    char* str;
 };
+struct string string_create(const char* init);
+void string_assign(struct string* restrict s, const char* restrict rhs);
+void string_append(struct string* restrict s, const char* restrict rhs);
+void string_destroy(struct string* s);
 
-class EnvVars
-{
-public:
-    EnvVars() {}
-    explicit EnvVars(from_system_type);
-    std::wstring get_environment_block() const;
-    void set_from_utf8(const char* s);
-    // get(name) returns the value of the corresponding environment variable,
-    // or an empty string if not found
-    std::wstring get(const wchar_t* name) const;
-private:
-    std::map<std::wstring, std::wstring, CompareEnvVarName> m_env;
-};
-
-class Env {
-    std::wstring get_comspec() const;
-    std::wstring get_module_windows_path() const;
-public:
-    Env();
-// attributes:
-    EnvVars initial_vars;
-    std::wstring windows_directory;
-    std::wstring system_directory;
-    std::wstring comspec;
-    std::wstring userprofile;
-    std::wstring module_directory;
-    std::wstring module_windows_path;
-};
+#endif // WRUN_STR_H

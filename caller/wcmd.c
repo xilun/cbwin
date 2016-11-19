@@ -30,6 +30,8 @@
 #include <unistd.h>
 
 #include "common.h"
+#include "xalloc.h"
+#include "err.h"
 
 static const char* tool_name;
 static char* wrun_path;

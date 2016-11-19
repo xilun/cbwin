@@ -29,6 +29,7 @@
 
 #include "env.h"
 #include "utf.h"
+#include "win_except.h"
 
 const from_system_type from_system{};
 
@@ -87,4 +88,74 @@ void EnvVars::set_from_utf8(const char* s)
         m_env[std::wstring(&ws[0], where - &ws[0])] = where + 1;
     else
         m_env.erase(std::wstring(&ws[0], where - &ws[0]));
+}
+
+namespace { // anonymous
+
+std::wstring get_windows_directory()
+{
+    wchar_t buf[MAX_PATH];
+    UINT res = ::GetWindowsDirectoryW(buf, MAX_PATH);
+    if (res == 0 || res >= MAX_PATH) { std::fprintf(stderr, "outbash: GetWindowsDirectory error\n"); std::abort(); }
+    return buf;
+}
+
+std::wstring get_system_directory()
+{
+    wchar_t buf[MAX_PATH];
+    UINT res = ::GetSystemDirectoryW(buf, MAX_PATH);
+    if (res == 0 || res >= MAX_PATH) { std::fprintf(stderr, "outbash: GetSystemDirectory error\n"); std::abort(); }
+    return buf;
+}
+
+std::wstring get_module_file_name()
+{
+    std::wstring result(MAX_PATH, wchar_t());
+    while (1) {
+        DWORD sz = ::GetModuleFileNameW(NULL, &result[0], (DWORD)result.size());
+        if (sz == 0) { Win32_perror("outbash: GetModuleFileName error"); std::abort(); }
+        if (sz < (DWORD)result.size()) {
+            result.resize(sz);
+            return result;
+        } else {
+            result.resize(result.size() * 2);
+        }
+    }
+}
+
+std::wstring get_directory(std::wstring filename)
+{
+    size_t p = filename.find_last_of(L"/\\");
+    if (p != std::wstring::npos)
+        filename.resize(p);
+    return filename;
+}
+
+} // namespace -- anonymous
+
+std::wstring Env::get_comspec() const
+{
+    std::wstring result = initial_vars.get(L"ComSpec");
+    if (!result.empty())
+        return result;
+    else
+        return system_directory + L"\\cmd.exe";
+}
+
+std::wstring Env::get_module_windows_path() const
+{
+    return module_directory + L";" + system_directory + L";" + windows_directory + L"\\system;" + windows_directory;
+}
+
+Env::Env() :
+    initial_vars{ from_system },
+    windows_directory{ get_windows_directory() },
+    system_directory{ get_system_directory() },
+    comspec{ get_comspec() },
+    userprofile{ initial_vars.get(L"USERPROFILE") },
+    module_directory{ get_directory(get_module_file_name()) },
+    module_windows_path{ get_module_windows_path() }
+{
+    if (userprofile.empty())
+        std::fprintf(stderr, "outbash: warning: USERPROFILE environment variable not found\n");
 }

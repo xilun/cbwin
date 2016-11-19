@@ -23,39 +23,17 @@
 #define _XOPEN_SOURCE 700
 #define _BSD_SOURCE
 
+#include "xalloc.h"
+
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <unistd.h>
-#include <signal.h>
 
-void output_err(const char* s)
-{
-    ssize_t len = (ssize_t)strlen(s);
-    ssize_t where = 0;
-    while (len - where > 0) {
-        ssize_t res = write(STDERR_FILENO, s + where, len - where);
-        if (res < 0) {
-            if (errno != EINTR)
-                return;
-        } else {
-            where += res;
-        }
-    }
-}
-
-void terminate_nocore()
-{
-    // we use SIGKILL because it's reliable, does not dump core, and Windows
-    // does not have it, so if we ever get crazy enough to propagate
-    // termination by signal, the caller will still be able to distinguish
-    // between local and Win32 failures.
-    kill(getpid(), SIGKILL);
-    abort(); // fallback, should not happen
-}
+#include "err.h"
 
 void* xmalloc(size_t sz)
 {
+    if (sz == 0) sz = 1;
+
     void* result = malloc(sz);
     if (result == NULL) {
         output_err("malloc failed\n");
@@ -66,6 +44,8 @@ void* xmalloc(size_t sz)
 
 void* xrealloc(void *ptr, size_t sz)
 {
+    if (sz == 0) sz = 1;
+
     void* result = realloc(ptr, sz);
     if (result == NULL) {
         output_err("realloc failed\n");
@@ -86,22 +66,15 @@ char* xstrdup(const char* s)
 
 void* xcalloc(size_t nmemb, size_t size)
 {
+    if (nmemb == 0 || size == 0) {
+        nmemb = 1;
+        size = 1;
+    }
+
     void* result = calloc(nmemb, size);
     if (result == NULL) {
         output_err("calloc failed\n");
         abort();
     }
     return result;
-}
-
-const char* shift(int *pargc, char ***pargv)
-{
-    if (*pargc) {
-        const char *shifted = **pargv;
-        (*pargc)--;
-        (*pargv)++;
-        return shifted;
-    } else {
-        abort();
-    }
 }
