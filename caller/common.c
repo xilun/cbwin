@@ -20,28 +20,35 @@
  * SOFTWARE.
  */
 
-#ifndef WRUN_COMMON_H
-#define WRUN_COMMON_H
+#include "common.h"
 
-#include <stdlib.h>
+#include <string.h>
 #include <stdbool.h>
 
-bool is_absolute_drive_fs_path(const char* s);
+#include "xalloc.h"
 
-// precondition: is_absolute_drive_fs_path(path)
-// the returned value must be freed by the caller
-char* convert_drive_fs_path_to_win32(const char* path);
+#define MNT_DRIVE_FS_PREFIX "/mnt/"
 
-static inline const char* shift(int *pargc, char ***pargv)
+bool is_absolute_drive_fs_path(const char* s)
 {
-    if (*pargc) {
-        const char *shifted = **pargv;
-        (*pargc)--;
-        (*pargv)++;
-        return shifted;
-    } else {
-        abort();
-    }
+    return (strncmp(s, MNT_DRIVE_FS_PREFIX, strlen(MNT_DRIVE_FS_PREFIX)) == 0)
+           && s[strlen(MNT_DRIVE_FS_PREFIX)] >= 'a'
+           && s[strlen(MNT_DRIVE_FS_PREFIX)] <= 'z'
+           && (s[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '/'
+               || s[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '\0');
 }
 
-#endif // WRUN_COMMON_H
+// precondition: is_absolute_drive_fs_path(path)
+char* convert_drive_fs_path_to_win32(const char* path)
+{
+    char* result = xmalloc(4 + strlen(path));
+    result[0] = path[strlen(MNT_DRIVE_FS_PREFIX)];
+    result[1] = ':';
+    result[2] = '\\';
+    strcpy(result + 3, path + strlen(MNT_DRIVE_FS_PREFIX) + 2);
+    size_t i;
+    for (i = 3; result[i]; i++)
+        if (result[i] == '/')
+            result[i] = '\\';
+    return result;
+}

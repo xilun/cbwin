@@ -47,8 +47,8 @@ multi-user computers.
 Or from source:
 
 1. Build `outbash.exe` with Visual C++ 2015 and use it instead of `bash.exe`
-2. In `caller/`, build `wrun`, `wcmd`, and `wstart` (with `./build.sh`)
-3. Install `wrun`, `wcmd`, and `wstart` in `/usr/local/bin` (with `sudo ./install.sh`)
+2. In `caller/`, build `wrun`, `wcmd`, and `wstart` (with `make all`)
+3. Install `wrun`, `wcmd`, and `wstart` in `/usr/local/bin` (with `sudo make install`)
 4. In WSL sessions launched by `outbash.exe`, you can now call Windows programs with the `wrun`, `wcmd`, and `wstart` commands.
 
 

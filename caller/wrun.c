@@ -43,7 +43,6 @@
 #include "str.h"
 
 #define MY_DYNAMIC_PATH_MAX (32768*3 + 32)
-#define MNT_DRIVE_FS_PREFIX "/mnt/"
 
 static const char* tool_name = "wrun";
 
@@ -102,30 +101,6 @@ static ssize_t send_all(const int sockfd, const void *buffer, const size_t lengt
     }
     assert(where == length);
     return (ssize_t)where;
-}
-
-// precondition: is_absolute_drive_fs_path(path)
-static char* convert_drive_fs_path_to_win32(const char* path)
-{
-    char* result = xmalloc(4 + strlen(path));
-    result[0] = path[strlen(MNT_DRIVE_FS_PREFIX)];
-    result[1] = ':';
-    result[2] = '\\';
-    strcpy(result + 3, path + strlen(MNT_DRIVE_FS_PREFIX) + 2);
-    size_t i;
-    for (i = 3; result[i]; i++)
-        if (result[i] == '/')
-            result[i] = '\\';
-    return result;
-}
-
-static bool is_absolute_drive_fs_path(const char* s)
-{
-    return (strncmp(s, MNT_DRIVE_FS_PREFIX, strlen(MNT_DRIVE_FS_PREFIX)) == 0)
-           && s[strlen(MNT_DRIVE_FS_PREFIX)] >= 'a'
-           && s[strlen(MNT_DRIVE_FS_PREFIX)] <= 'z'
-           && (s[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '/'
-               || s[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '\0');
 }
 
 static char* convert_slash_to_backslash(const char* path)
