@@ -20,9 +20,6 @@
  * SOFTWARE.
  */
 
-#define _XOPEN_SOURCE 700
-#define _BSD_SOURCE
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +29,7 @@
 #include "common.h"
 #include "xalloc.h"
 #include "err.h"
+#include "nvec.h"
 
 static const char* tool_name;
 static char* wrun_path;
@@ -66,27 +64,11 @@ static int get_tool(const char* argv0)
     }
 }
 
-struct sarg {
-    char** argv; // intended for execvp, used as const...
-    size_t alloc_elems; // including the terminal NULL
-    size_t idx;
-};
+typedef nvec_t(char*) nvec_charp;
 
-void init_sarg(struct sarg* sa, size_t nbelem)
+static void push_sarg(nvec_charp *sa, const char* arg)
 {
-    sa->argv = xcalloc(nbelem, sizeof(char*));
-    sa->alloc_elems = nbelem;
-    sa->idx = 0;
-}
-
-void push_sarg(struct sarg* sa, const char* arg)
-{
-    if (sa->idx+1 < sa->alloc_elems) {
-        sa->argv[sa->idx++] = (char*) arg;
-    } else {
-        dprintf(STDERR_FILENO, "%s: new argv overflow\n", tool_name);
-        abort();
-    }
+    nv_push(*sa, (char*)arg);
 }
 
 int main(int argc, char *argv[])
@@ -97,8 +79,8 @@ int main(int argc, char *argv[])
     }
     int tool = get_tool(argv[0]);
 
-    struct sarg sa;
-    init_sarg(&sa, argc+1 + 5);
+    nvec_charp sa;
+    nv_init(sa);
 
     shift(&argc, &argv); // argv0
     push_sarg(&sa, wrun_path);
@@ -138,7 +120,8 @@ int main(int argc, char *argv[])
     while (argc)
         push_sarg(&sa, shift(&argc, &argv));
 
-    if (execvp(wrun_path, sa.argv) < 0) {
+    push_sarg(&sa, NULL);
+    if (execvp(wrun_path, sa.a) < 0) {
         dprintf(STDERR_FILENO, "%s: failed to exec wrun: %s\n", tool_name, strerror(errno));
         return 1;
     }

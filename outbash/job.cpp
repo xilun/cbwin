@@ -184,8 +184,8 @@ enum class EActivity
 class CJobPidHandles {
 public:
     CJobPidHandles() : m_pHPidList(nullptr) {}
-    CJobPidHandles(CJobPidHandles&& other) : m_pHPidList(other.m_pHPidList) { other.m_pHPidList = nullptr; }
-    CJobPidHandles& operator=(CJobPidHandles&& other)
+    CJobPidHandles(CJobPidHandles&& other) noexcept : m_pHPidList(other.m_pHPidList) { other.m_pHPidList = nullptr; }
+    CJobPidHandles& operator=(CJobPidHandles&& other) noexcept
     {
         if (this != &other) {
             free_hpid_list();

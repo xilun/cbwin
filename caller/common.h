@@ -24,6 +24,13 @@
 #define WRUN_COMMON_H
 
 #include <stdlib.h>
+#include <stdbool.h>
+
+bool is_absolute_drive_fs_path(const char* s);
+
+// precondition: is_absolute_drive_fs_path(path)
+// the returned value must be freed by the caller
+char* convert_drive_fs_path_to_win32(const char* path);
 
 static inline const char* shift(int *pargc, char ***pargv)
 {

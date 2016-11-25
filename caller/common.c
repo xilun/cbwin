@@ -20,58 +20,35 @@
  * SOFTWARE.
  */
 
+#include "common.h"
+
+#include <string.h>
+#include <stdbool.h>
+
 #include "xalloc.h"
 
-#include <stdlib.h>
-#include <string.h>
+#define MNT_DRIVE_FS_PREFIX "/mnt/"
 
-#include "err.h"
-
-void* xmalloc(size_t sz)
+bool is_absolute_drive_fs_path(const char* s)
 {
-    if (sz == 0) sz = 1;
-
-    void* result = malloc(sz);
-    if (result == NULL) {
-        output_err("malloc failed\n");
-        abort();
-    }
-    return result;
+    return (strncmp(s, MNT_DRIVE_FS_PREFIX, strlen(MNT_DRIVE_FS_PREFIX)) == 0)
+           && s[strlen(MNT_DRIVE_FS_PREFIX)] >= 'a'
+           && s[strlen(MNT_DRIVE_FS_PREFIX)] <= 'z'
+           && (s[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '/'
+               || s[strlen(MNT_DRIVE_FS_PREFIX) + 1] == '\0');
 }
 
-void* xrealloc(void *ptr, size_t sz)
+// precondition: is_absolute_drive_fs_path(path)
+char* convert_drive_fs_path_to_win32(const char* path)
 {
-    if (sz == 0) sz = 1;
-
-    void* result = realloc(ptr, sz);
-    if (result == NULL) {
-        output_err("realloc failed\n");
-        abort();
-    }
-    return result;
-}
-
-char* xstrdup(const char* s)
-{
-    char* result = strdup(s);
-    if (result == NULL) {
-        output_err("strdup failed\n");
-        abort();
-    }
-    return result;
-}
-
-void* xcalloc(size_t nmemb, size_t size)
-{
-    if (nmemb == 0 || size == 0) {
-        nmemb = 1;
-        size = 1;
-    }
-
-    void* result = calloc(nmemb, size);
-    if (result == NULL) {
-        output_err("calloc failed\n");
-        abort();
-    }
+    char* result = xmalloc(4 + strlen(path));
+    result[0] = path[strlen(MNT_DRIVE_FS_PREFIX)];
+    result[1] = ':';
+    result[2] = '\\';
+    strcpy(result + 3, path + strlen(MNT_DRIVE_FS_PREFIX) + 2);
+    size_t i;
+    for (i = 3; result[i]; i++)
+        if (result[i] == '/')
+            result[i] = '\\';
     return result;
 }

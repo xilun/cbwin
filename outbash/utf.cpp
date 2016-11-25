@@ -98,4 +98,4 @@ std::wstring widen(const std::string& s)
 }
 
 
-}
+} // namespace utf

@@ -20,9 +20,6 @@
  * SOFTWARE.
  */
 
-#define _XOPEN_SOURCE 700
-#define _BSD_SOURCE
-
 #include "err.h"
 
 #include <stdlib.h>
