@@ -945,6 +945,10 @@ int main(int argc, char *argv[])
     while (state != TERMINATED) {
         fd_set rfds;
         FD_ZERO(&rfds);
+        if (sock_ctrl < 0 || sock_ctrl >= FD_SETSIZE) {
+            dprintf(STDERR_FILENO, "%s: sock_ctrl=%d out of range\n", tool_name, sock_ctrl);
+            abort();
+        }
         FD_SET(sock_ctrl, &rfds);
 
         int pselect_res = pselect(nfds, &rfds, NULL, NULL, NULL, &orig_mask); // tstop_handler can run here
