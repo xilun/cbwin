@@ -26,10 +26,12 @@ add_executable(outbash
 
 add_definitions(/D_UNICODE /DUNICODE /DNOMINMAX)
 
+target_link_libraries(outbash ws2_32 iphlpapi)
+
 if(MSVC)
 
     if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        set_target_properties(outbash PROPERTIES COMPILE_FLAGS "/Wall -Wextra")
+        set_target_properties(outbash PROPERTIES COMPILE_FLAGS "/Wall -Wextra") # Clang/C2
     else()
         # Additional compiler options:
         #   sdl: enable more security checks
@@ -49,7 +51,7 @@ if(MSVC)
         #   GL: enable whole program optimization (link time code gen)
         #   Gw: Optimize Global Data (allow Ref and Icf optim of const data)
         set(CMAKE_CXX_FLAGS_RELEASE        "${CMAKE_CXX_FLAGS_RELEASE}        /GL /Gw /O2 /Ob2")
-        set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /GL /Gw /O2 /Ob2")
+        set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /GL /Gw /O1 /Ob2")
         set(CMAKE_CXX_FLAGS_MINSIZEREL     "${CMAKE_CXX_FLAGS_MINSIZEREL}     /GL /Gw /O1 /Ob2")
     endif()
 
@@ -78,4 +80,11 @@ if(MSVC)
 
     target_link_libraries(outbash debug -NODEFAULTLIB:libucrtd.lib debug ucrtd.lib)
     target_link_libraries(outbash optimized -NODEFAULTLIB:libucrt.lib optimized ucrt.lib)
+
+else() # MSYS2 MinGW64 Gcc 6.2, for testing
+
+    add_definitions(-DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00)
+    set_target_properties(outbash PROPERTIES COMPILE_FLAGS "-municode -mwin32 -mthreads -std=c++14 -Wall -Wextra") # -ffunction-sections -fdata-sections
+    # set(CMAKE_EXE_LINKER_FLAGS "-static") # -Wl,--gc-sections -Wl,--cref
+
 endif()

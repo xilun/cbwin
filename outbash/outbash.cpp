@@ -25,17 +25,20 @@
 #include <Windows.h>
 
 #include <memory>
-#include <thread>
 #include <vector>
 #include <string>
 #include <algorithm>
 #include <exception>
+#include <system_error>
+#include <thread>
+
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cstdint>
 #include <clocale>
+#include <climits>
 #include <mbctype.h>
 
 #include "utf.h"
@@ -47,8 +50,6 @@
 #include "handle.h"
 #include "tcp_help.h"
 #include "security.h"
-
-#pragma comment(lib, "Ws2_32.lib")
 
 using std::size_t;
 using std::uint16_t;
@@ -419,7 +420,7 @@ public:
     {
         if (s != INVALID_SOCKET) {
             ::WSAEventSelect(s, NULL, 0);
-            unsigned long nonblocking = 0;
+            u_long nonblocking = 0;
             if (::ioctlsocket(s, FIONBIO, &nonblocking) != 0) throw_last_error("set socket to blocking");
         }
     }
@@ -954,6 +955,10 @@ static BOOL WINAPI CtrlHandlerRoutine(_In_ DWORD dwCtrlType)
         return FALSE;   // fallback to default handler
     }
 }
+
+#ifndef SOMAXCONN_HINT
+# define SOMAXCONN_HINT(b) (-(b))
+#endif
 
 int main()
 {

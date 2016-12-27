@@ -21,6 +21,7 @@
  */
 
 #include <Windows.h>
+#include <climits>
 
 #include "utf.h"
 
