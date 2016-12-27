@@ -22,6 +22,7 @@ add_executable(outbash
                tcp_help.cpp
                resources.h
                outbash.cpp
+               mingw.thread.h
                outbash.rc)
 
 add_definitions(/D_UNICODE /DUNICODE /DNOMINMAX)
