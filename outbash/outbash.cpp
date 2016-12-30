@@ -116,11 +116,11 @@ public:
             } else if (param == L"--outbash-launcher") {
                 m_bash_launcher = parse_argv_param(new_p, &new_p);
                 if (m_bash_launcher.empty() || m_bash_launcher.find(L'"') != std::wstring::npos) {
-                    std::fprintf(stderr, "outbash: invalid --outbash-launcher param %S\n", m_bash_launcher.c_str());
+                    std::fprintf(stderr, "outbash: invalid --outbash-launcher param %ls\n", m_bash_launcher.c_str());
                     std::exit(1);
                 }
             } else {
-                std::fprintf(stderr, "outbash: unknown %S param\n", param.c_str());
+                std::fprintf(stderr, "outbash: unknown %ls param\n", param.c_str());
                 std::exit(1);
             }
 
@@ -289,7 +289,7 @@ static int start_command(const wchar_t* module,
             }
             wdir = env.userprofile.c_str();
         } else if (!path_is_really_absolute(dir)) { // CreateProcess will happily use a relative, but we don't want to
-            std::fprintf(stderr, "outbash: start_command: non-absolute directory parameter: %S\n", dir);
+            std::fprintf(stderr, "outbash: start_command: non-absolute directory parameter: %ls\n", dir);
             return 1;
         } else
             wdir = dir;
@@ -325,7 +325,7 @@ static int start_command(const wchar_t* module,
                           CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | creation_flags,
                           (LPVOID)env_block, wdir, (STARTUPINFOW*)&si, &out_pi)) {
         Win32_perror("outbash: CreateProcess");
-        std::fprintf(stderr, "outbash: CreateProcess failed (%lu) for module %c%S%c command: %S\n",
+        std::fprintf(stderr, "outbash: CreateProcess failed (%lu) for module %c%ls%c command: %ls\n",
                      ::GetLastError(),
                      wmodule == nullptr ? '<' : '"', wmodule == nullptr ? L"NULL" : wmodule, wmodule == nullptr ? '>' : '"',
                      cmdline.c_str());

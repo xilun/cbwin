@@ -28,7 +28,7 @@ void DisplayNTError(const char* what, LONG NTStatus)
     if (nbWChars == 0) {
         std::fprintf(stderr, "%s: NT Error Status: 0x%lX\n", what, (unsigned long)NTStatus);
     } else {
-        std::fprintf(stderr, "%s: 0x%lX: %S\n", what, (unsigned long)NTStatus, str);
+        std::fprintf(stderr, "%s: 0x%lX: %ls\n", what, (unsigned long)NTStatus, str);
         ::LocalFree(str);
     }
 }
