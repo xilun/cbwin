@@ -1,8 +1,7 @@
 #!/bin/bash
 set -e
-
-echo
-echo 'WARNING: this script is deprecated - use "make install" directly'
-echo
-
-make install
+rm -f /usr/local/bin/{wrun,wcmd,wstart}
+install -t /usr/local/bin wrun
+install -t /usr/local/bin wcmd
+cd /usr/local/bin
+ln wcmd wstart
