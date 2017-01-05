@@ -893,7 +893,7 @@ private:
             process_handle.close();
             job_handle.close();
 
-            if (redir.get())
+            if (redir)
                 redir->close();
 
             ctrl_ev.close();

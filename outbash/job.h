@@ -1,33 +1,18 @@
 #pragma once
 
-class CSuspendedJobImpl;
+#include <WinDef.h>
+#include <memory>
 
 class CSuspendedJob {
 public:
     friend CSuspendedJob Suspend_Job_Object(HANDLE hJob);
     void resume(); // Postcondition: this->is_empty()
-
-    // C++ is too shitty to allow usable and efficient pImpl designs based on unique_ptr,
-    // so we have to also write all the boring stuff ourselves :/
-    // This is even more ridiculous because the C++ pImpl pattern needs too much
-    // boilerplate forwarding code in the first place, because of previous shortcomings
-    // of the language (in contrast with a simple opaque structure pattern with explicit
-    // allocators). GRRRRRRRR! I should have stuck to C :/
-    CSuspendedJob() : m_pImpl(nullptr) {}
-    CSuspendedJob(CSuspendedJob&& other) : m_pImpl(other.m_pImpl) { other.m_pImpl = nullptr; }
-    CSuspendedJob& operator=(CSuspendedJob&& other)
-    {
-        free_pimpl();
-        m_pImpl = other.m_pImpl;
-        other.m_pImpl = nullptr;
-        return *this;
-    }
-    bool is_empty() const { return m_pImpl == nullptr; }
-    ~CSuspendedJob();
+    bool is_empty() const { return !m_pImpl; }
 
 private:
-    void free_pimpl();
-    CSuspendedJobImpl*  m_pImpl;
+    class Impl;
+    struct ImplDeleter { void operator()(Impl*) const; };
+    std::unique_ptr<Impl, ImplDeleter> m_pImpl;
 };
 
 // A free function is preferred to a constructor or a static method here:
