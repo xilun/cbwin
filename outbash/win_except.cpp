@@ -55,7 +55,7 @@ void Win32_perror(const char* what)
                      what_present ? ": " : "",
                      errnum);
     } else {
-        std::fprintf(stderr, "%s%s%S\n",
+        std::fprintf(stderr, "%s%s%ls\n",
                      what_present ? what : "",
                      what_present ? ": " : "",
                      str);

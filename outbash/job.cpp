@@ -409,9 +409,9 @@ CJobPidHandles::~CJobPidHandles()
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-class CSuspendedJobImpl {
+class CSuspendedJob::Impl {
 public:
-    explicit CSuspendedJobImpl(HANDLE hJob);
+    explicit Impl(HANDLE hJob);
     void resume();
 private:
     void job_cpu_rate_limit();
@@ -423,7 +423,7 @@ private:
     bool                                    m_cpu_rate_control_applied;
 };
 
-CSuspendedJobImpl::CSuspendedJobImpl(HANDLE hJob)
+CSuspendedJob::Impl::Impl(HANDLE hJob)
   : m_job_pid_handles(),
     m_hJob(hJob),
     m_orig_cpu_rate_control_info{},
@@ -469,7 +469,7 @@ CSuspendedJobImpl::CSuspendedJobImpl(HANDLE hJob)
         job_cpu_rate_restore();
 }
 
-void CSuspendedJobImpl::job_cpu_rate_limit()
+void CSuspendedJob::Impl::job_cpu_rate_limit()
 {
     if (!m_cpu_rate_control_applied)
     {
@@ -496,7 +496,7 @@ void CSuspendedJobImpl::job_cpu_rate_limit()
     }
 }
 
-void CSuspendedJobImpl::job_cpu_rate_restore()
+void CSuspendedJob::Impl::job_cpu_rate_restore()
 {
     if (m_cpu_rate_control_applied) {
         if (!::SetInformationJobObject(
@@ -511,12 +511,18 @@ void CSuspendedJobImpl::job_cpu_rate_restore()
     }
 }
 
-void CSuspendedJobImpl::resume()
+void CSuspendedJob::Impl::resume()
 {
     job_cpu_rate_restore();
     m_job_pid_handles.resume_all_suspended();
 }
 
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+void CSuspendedJob::ImplDeleter::operator()(CSuspendedJob::Impl* pImpl) const
+{
+    delete pImpl;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -525,24 +531,13 @@ void CSuspendedJob::resume()
     if (m_pImpl)
     {
         m_pImpl->resume();
-        free_pimpl();
+        m_pImpl.reset();
     }
-}
-
-CSuspendedJob::~CSuspendedJob()
-{
-    free_pimpl();
-}
-
-void CSuspendedJob::free_pimpl()
-{
-    delete m_pImpl;
-    m_pImpl = nullptr;
 }
 
 CSuspendedJob Suspend_Job_Object(HANDLE hJob)
 {
     CSuspendedJob blah;
-    blah.m_pImpl = new CSuspendedJobImpl(hJob);
+    blah.m_pImpl.reset(new CSuspendedJob::Impl(hJob));
     return blah;
 }

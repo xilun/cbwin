@@ -31,9 +31,6 @@
 
 #include "tcp_help.h"
 
-#pragma comment(lib, "iphlpapi.lib")
-#pragma comment(lib, "ws2_32.lib")
-
 
 #define MY_SIZEOF_TCPTABLE_OWNER_PID(X) ( FIELD_OFFSET(MIB_TCPTABLE_OWNER_PID, table[0])    \
                                           + ((X) * sizeof(MIB_TCPROW_OWNER_PID)) + 8 )

@@ -25,17 +25,28 @@
 #include <Windows.h>
 
 #include <memory>
-#include <thread>
 #include <vector>
 #include <string>
 #include <algorithm>
 #include <exception>
+#include <system_error>
+
+// by default we don't use MSVC's std::thread, because it adds ~200kB of binary code (in static)
+//#define USE_COMPILER_STD_THREAD
+#ifdef USE_COMPILER_STD_THREAD
+#include <thread>
+#else
+#include "mingw.thread.h" // from https://github.com/meganz/mingw-std-threads
+// it depends on Win32 and CRT so it also works fine with MSVC
+#endif
+
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cstdint>
 #include <clocale>
+#include <climits>
 #include <mbctype.h>
 
 #include "utf.h"
@@ -49,7 +60,11 @@
 #include "security.h"
 #include "console.h"
 
-#pragma comment(lib, "Ws2_32.lib")
+#ifdef USE_COMPILER_STD_THREAD
+using std::thread;
+#else
+using win32_std_threads::thread;
+#endif
 
 using std::size_t;
 using std::uint16_t;
@@ -104,11 +119,11 @@ public:
             } else if (param == L"--outbash-launcher") {
                 m_bash_launcher = parse_argv_param(new_p, &new_p);
                 if (m_bash_launcher.empty() || m_bash_launcher.find(L'"') != std::wstring::npos) {
-                    std::fprintf(stderr, "outbash: invalid --outbash-launcher param %S\n", m_bash_launcher.c_str());
+                    std::fprintf(stderr, "outbash: invalid --outbash-launcher param %ls\n", m_bash_launcher.c_str());
                     std::exit(1);
                 }
             } else {
-                std::fprintf(stderr, "outbash: unknown %S param\n", param.c_str());
+                std::fprintf(stderr, "outbash: unknown %ls param\n", param.c_str());
                 std::exit(1);
             }
 
@@ -278,7 +293,7 @@ static int start_command(const wchar_t* module,
             }
             wdir = env.userprofile.c_str();
         } else if (!path_is_really_absolute(dir)) { // CreateProcess will happily use a relative, but we don't want to
-            std::fprintf(stderr, "outbash: start_command: non-absolute directory parameter: %S\n", dir);
+            std::fprintf(stderr, "outbash: start_command: non-absolute directory parameter: %ls\n", dir);
             return 1;
         } else
             wdir = dir;
@@ -314,7 +329,7 @@ static int start_command(const wchar_t* module,
                           CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | creation_flags,
                           (LPVOID)env_block, wdir, (STARTUPINFOW*)&si, &out_pi)) {
         Win32_perror("outbash: CreateProcess");
-        std::fprintf(stderr, "outbash: CreateProcess failed (%lu) for module %c%S%c command: %S\n",
+        std::fprintf(stderr, "outbash: CreateProcess failed (%lu) for module %c%ls%c command: %ls\n",
                      ::GetLastError(),
                      wmodule == nullptr ? '<' : '"', wmodule == nullptr ? L"NULL" : wmodule, wmodule == nullptr ? '>' : '"',
                      cmdline.c_str());
@@ -423,7 +438,7 @@ public:
     {
         if (s != INVALID_SOCKET) {
             ::WSAEventSelect(s, NULL, 0);
-            unsigned long nonblocking = 0;
+            u_long nonblocking = 0;
             if (::ioctlsocket(s, FIONBIO, &nonblocking) != 0) throw_last_error("set socket to blocking");
         }
     }
@@ -892,7 +907,7 @@ private:
             process_handle.close();
             job_handle.close();
 
-            if (redir.get())
+            if (redir)
                 redir->close();
 
             ctrl_ev.close();
@@ -923,7 +938,7 @@ private:
 
 struct ThreadConnection {
     std::unique_ptr<CConnection>    m_pConn;
-    std::thread                     m_thread;
+    thread                          m_thread;
 };
 
 static void reap_connections(std::vector<ThreadConnection>& vTConn)
@@ -968,6 +983,10 @@ static BOOL WINAPI CtrlHandlerRoutine(_In_ DWORD dwCtrlType)
         return FALSE;   // fallback to default handler
     }
 }
+
+#ifndef SOMAXCONN_HINT
+# define SOMAXCONN_HINT(b) (-(b))
+#endif
 
 int main()
 {
@@ -1066,9 +1085,9 @@ int main()
                     CUniqueSocket usock(conn);
                     try {
                         usock.set_to_blocking();
-                        ThreadConnection tc{ std::make_unique<CConnection>(std::move(usock), server_port), std::thread() };
+                        ThreadConnection tc{ std::make_unique<CConnection>(std::move(usock), server_port), thread() };
                         CConnection *pConnection = tc.m_pConn.get();
-                        tc.m_thread = std::thread([=] { pConnection->run(); });
+                        tc.m_thread = thread([=] { pConnection->run(); });
                         vTConn.push_back(std::move(tc));
                     } catch (const std::system_error& e) {
                         std::fprintf(stderr, "outbash: exception system_error when trying to handle a new request: %s\n", e.what());
