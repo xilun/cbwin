@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2016  Guillaume Knispel <xilun0@gmail.com>
+ * Copyright(c) 2016-2017  Guillaume Knispel <xilun0@gmail.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,8 +22,8 @@
 
 #include <Windows.h>
 
-#include <mutex>
 #include <array>
+#include "my.mutex.h"
 
 #include "console.h"
 #include "win_except.h"
@@ -44,7 +44,7 @@ public:
     void get_orig()
     {
         if (m_managed) {
-            std::lock_guard<std::mutex> lock(m_mutex);
+            my::lock_guard<my::mutex> lock(m_mutex);
             if (++m_orig_users == 1) {
                 if (!::GetConsoleMode(m_handle, &m_saved_mode)) {
                     Win32_perror("GetConsoleMode (CConsoleMode::get_orig)");
@@ -59,7 +59,7 @@ public:
     void put_orig()
     {
         if (m_managed) {
-            std::lock_guard<std::mutex> lock(m_mutex);
+            my::lock_guard<my::mutex> lock(m_mutex);
             if (--m_orig_users == 0) {
                 if (!::SetConsoleMode(m_handle, m_saved_mode)) {
                     Win32_perror("SetConsoleMode (CConsoleMode::put_orig)");
@@ -70,7 +70,7 @@ public:
     bool is_managed() const { return m_managed; }
 private:
     const HANDLE    m_handle;
-    std::mutex      m_mutex;
+    my::mutex       m_mutex;
     DWORD           m_orig_mode;
     DWORD           m_saved_mode;
     int             m_orig_users;

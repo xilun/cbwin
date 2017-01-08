@@ -25,7 +25,9 @@ add_executable(outbash
                resources.h
                outbash.cpp
                mingw.thread.h
+               mingw.mutex.h
                my.thread.h
+               my.mutex.h
                outbash.rc)
 
 # by default we don't use MSVC's std::thread, because it adds ~200kB of binary code (in static)
