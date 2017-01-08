@@ -10,7 +10,7 @@
 
 #include "ntsuspend.h"
 
-void DisplayNTError(const char* what, LONG NTStatus)
+static void DisplayNTError(const char* what, LONG NTStatus)
 {
     HMODULE ntdll = ::GetModuleHandleA("ntdll.dll");
 
