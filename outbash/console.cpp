@@ -83,7 +83,7 @@ private:
 class CInOutConsoleModes::CInOutConsoleModesImpl {
 public:
     CInOutConsoleModesImpl()
-      : m_console_modes{ { STD_INPUT_HANDLE, STD_OUTPUT_HANDLE } },
+      : m_console_modes{ { {STD_INPUT_HANDLE}, {STD_OUTPUT_HANDLE} } },
         m_mask_filter(  (m_console_modes[DIR_CONSOLE_IN].is_managed()  ? DIR_CONSOLE_IN_BIT  : 0)
                       | (m_console_modes[DIR_CONSOLE_OUT].is_managed() ? DIR_CONSOLE_OUT_BIT : 0)) {}
     std::array<CConsoleMode, 2> m_console_modes;
