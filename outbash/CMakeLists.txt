@@ -25,7 +25,11 @@ add_executable(outbash
                resources.h
                outbash.cpp
                mingw.thread.h
+               my.thread.h
                outbash.rc)
+
+# by default we don't use MSVC's std::thread, because it adds ~200kB of binary code (in static)
+#add_definitions(/DUSE_COMPILER_STD_THREAD)
 
 add_definitions(/D_UNICODE /DUNICODE /DNOMINMAX)
 

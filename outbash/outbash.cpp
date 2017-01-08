@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2016  Guillaume Knispel <xilun0@gmail.com>
+ * Copyright(c) 2016-2017  Guillaume Knispel <xilun0@gmail.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,15 +30,7 @@
 #include <algorithm>
 #include <exception>
 #include <system_error>
-
-// by default we don't use MSVC's std::thread, because it adds ~200kB of binary code (in static)
-//#define USE_COMPILER_STD_THREAD
-#ifdef USE_COMPILER_STD_THREAD
-#include <thread>
-#else
-#include "mingw.thread.h" // from https://github.com/meganz/mingw-std-threads
-// it depends on Win32 and CRT so it also works fine with MSVC
-#endif
+#include "my.thread.h"
 
 #include <cassert>
 #include <cstdio>
@@ -59,12 +51,6 @@
 #include "tcp_help.h"
 #include "security.h"
 #include "console.h"
-
-#ifdef USE_COMPILER_STD_THREAD
-using std::thread;
-#else
-using win32_std_threads::thread;
-#endif
 
 using std::size_t;
 using std::uint16_t;
@@ -938,7 +924,7 @@ private:
 
 struct ThreadConnection {
     std::unique_ptr<CConnection>    m_pConn;
-    thread                          m_thread;
+    my::thread                      m_thread;
 };
 
 static void reap_connections(std::vector<ThreadConnection>& vTConn)
@@ -1085,9 +1071,9 @@ int main()
                     CUniqueSocket usock(conn);
                     try {
                         usock.set_to_blocking();
-                        ThreadConnection tc{ std::make_unique<CConnection>(std::move(usock), server_port), thread() };
+                        ThreadConnection tc{ std::make_unique<CConnection>(std::move(usock), server_port), my::thread() };
                         CConnection *pConnection = tc.m_pConn.get();
-                        tc.m_thread = thread([=] { pConnection->run(); });
+                        tc.m_thread = my::thread([=] { pConnection->run(); });
                         vTConn.push_back(std::move(tc));
                     } catch (const std::system_error& e) {
                         std::fprintf(stderr, "outbash: exception system_error when trying to handle a new request: %s\n", e.what());

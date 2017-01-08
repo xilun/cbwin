@@ -22,8 +22,11 @@
 
 #pragma once
 
-#include "handle.h"
-
-bool check_caller_process_allowed(const CUniqueHandle& hProcess);
-
-
+#ifdef USE_COMPILER_STD_THREAD
+#include <thread>
+namespace my = std;
+#else
+#include "mingw.thread.h" // from https://github.com/meganz/mingw-std-threads
+// it depends on Win32 and CRT so it also works fine with MSVC
+namespace my = win32_std_threads;
+#endif
