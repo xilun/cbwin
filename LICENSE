@@ -27,7 +27,7 @@ SOFTWARE.
 
                                 ***
 
-    ### mingw.thread.h is under the following license: ###
+    ### mingw.thread.h and mingw.mutex.h are under the following license: ###
 
 Copyright (c) 2016, Mega Limited
 All rights reserved.
