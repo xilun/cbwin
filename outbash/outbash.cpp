@@ -895,8 +895,8 @@ private:
         }
 
     private:
-        const size_t line_supported_length = 32768*3 + 16; // in bytes (UTF-8); indicative approx max length (the size can grow to at least that)
-        const int ctrl_recv_block_size = 2048;
+        static const size_t line_supported_length = 32768*3 + 16; // in bytes (UTF-8); indicative approx max length (the size can grow to at least that)
+        static const int ctrl_recv_block_size = 2048;
     private:
         CUniqueSocket&  m_usock;
         std::string     m_buf;
