@@ -44,7 +44,8 @@ if(MSVC)
         #   GR-: disable RTTI
         #   W4: max warning level usable in practice (MSVC's Wall chokes on crt and system headers)
         #   MP: compile using multiple processes
-        set_target_properties(outbash PROPERTIES COMPILE_FLAGS "/sdl /guard:cf /GR- /W4 /MP")
+        #   d2SSAOptimizer-: disable SSA optimizer (which does bad codegen on various trivial code)
+        set_target_properties(outbash PROPERTIES COMPILE_FLAGS "/sdl /guard:cf /GR- /W4 /MP /d2SSAOptimizer-")
 
         # Set C++ as conforming as possible:
         set_property(TARGET outbash APPEND_STRING PROPERTY COMPILE_FLAGS " /Zc:strictStrings /Zc:rvalueCast")
