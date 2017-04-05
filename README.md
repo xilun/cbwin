@@ -2,7 +2,12 @@
 
 Launch Windows programs from "Bash on Ubuntu on Windows" (WSL)
 
-main features:
+NOTE: WSL in Windows 10 Creators Update (version 1703) can natively launch
+Windows programs. I recommend that you try it and use it if you can. Cbwin
+remains available for people using WSL on Windows 10 Anniversary Update
+(version 1607) -- and will also continue to run on version 1703.
+
+main cbwin features:
 
 * Win32 command line tools in the console, invoked from WSL
 * Win32 command line tools with redirections to WSL (stdin/stdout/stderr to or from pipe/file)
